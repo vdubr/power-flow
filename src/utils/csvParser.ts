@@ -106,26 +106,27 @@ export function detectDataType(header: string): 'consumption' | 'production' | n
 }
 
 /**
- * Parses date in format DD.MM.YYYY HH:mm
+ * Parses date in format DD.MM.YYYY HH:mm or DD.MM.YYYY HH:mm:ss
  */
 export function parseDate(dateStr: string): Date | null {
   const trimmed = dateStr.trim();
   
-  // Expected format: DD.MM.YYYY HH:mm
-  const regex = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/;
+  // Expected format: DD.MM.YYYY HH:mm or DD.MM.YYYY HH:mm:ss
+  const regex = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/;
   const match = trimmed.match(regex);
   
   if (!match) {
     return null;
   }
   
-  const [, day, month, year, hour, minute] = match;
+  const [, day, month, year, hour, minute, second] = match;
   const date = new Date(
     parseInt(year, 10),
     parseInt(month, 10) - 1, // Month is 0-indexed
     parseInt(day, 10),
     parseInt(hour, 10),
-    parseInt(minute, 10)
+    parseInt(minute, 10),
+    second ? parseInt(second, 10) : 0
   );
   
   // Validate the date is valid
