@@ -42,9 +42,13 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, subtitle, icon, color
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            color,
+            '& svg': {
+              fontSize: 24,
+            },
           }}
         >
-          {React.cloneElement(icon as React.ReactElement<{ sx?: object }>, { sx: { color, fontSize: 24 } })}
+          {icon}
         </Box>
         <Typography variant="body2" color="text.secondary">
           {title}

@@ -415,7 +415,7 @@ const MainChart: React.FC = () => {
       })),
     };
     return chartOptions;
-  }, [chartData, aggregationType, selectedYears.length, theme]);
+  }, [chartData, aggregationType, selectedYears.length, theme.palette.text.secondary]);
   
   // Handle resize
   useEffect(() => {

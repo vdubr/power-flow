@@ -54,14 +54,21 @@ const FileUploader: React.FC = () => {
   const getYearFromData = (data: RawDataPoint[]): number | null => {
     if (data.length === 0) return null;
     // Get the most common year in the data
-    const years = data.map(d => d.timestamp.getFullYear());
-    const yearCounts = years.reduce((acc, year) => {
-      acc[year] = (acc[year] || 0) + 1;
-      return acc;
-    }, {} as Record<number, number>);
-    return Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0]?.[0] 
-      ? parseInt(Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0][0])
-      : null;
+    const yearCounts = new Map<number, number>();
+    for (const point of data) {
+      const year = point.timestamp.getFullYear();
+      yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
+    }
+    
+    let maxYear: number | null = null;
+    let maxCount = 0;
+    for (const [year, count] of yearCounts) {
+      if (count > maxCount) {
+        maxCount = count;
+        maxYear = year;
+      }
+    }
+    return maxYear;
   };
   
   const handleFileSelect = useCallback(

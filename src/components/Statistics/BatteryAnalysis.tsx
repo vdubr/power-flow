@@ -240,7 +240,8 @@ const BatteryAnalysis: React.FC = () => {
           
           let html = `<strong>${date}</strong><br/>`;
           html += `<span style="color:#ff6b6b">●</span> Dokup ze sítě: ${dayData.gridImport.toFixed(2)} kWh<br/>`;
-          html += `<span style="color:#69db7c">●</span> Soběstačnost: ${dayData.selfSufficiencyPercent.toFixed(1)}%<br/>`;
+          html += `<span style="color:#999">○</span> Původní dokup: ${dayData.gridImportOriginal.toFixed(2)} kWh<br/>`;
+          html += `<span style="color:#69db7c">●</span> Pokrytí baterií: ${dayData.selfSufficiencyPercent.toFixed(1)}%<br/>`;
           if (dayData.isOffGrid) {
             html += `<span style="color:#ff9800">★ Ostrovní den</span>`;
           }
@@ -556,7 +557,7 @@ const BatteryAnalysis: React.FC = () => {
                   <Box display="flex" alignItems="center" mb={1}>
                     <BoltIcon sx={{ color: '#29b6f6', mr: 1 }} />
                     <Typography variant="body2" color="text.secondary">
-                      Průměrná denní soběstačnost
+                      Pokrytí importu baterií
                     </Typography>
                   </Box>
                   <Typography variant="h4" fontWeight={600}>
@@ -565,7 +566,7 @@ const BatteryAnalysis: React.FC = () => {
                       : '0'}%
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Podíl energie z vlastní výroby + baterie
+                    Průměrné denní pokrytí původního importu ze sítě
                   </Typography>
                 </CardContent>
               </Card>

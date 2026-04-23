@@ -83,8 +83,14 @@ function calculateYearStatistics(records: EnergyRecord[], year: number): YearSta
     };
   }
 
-  let totalConsumption = 0;
-  let totalProduction = 0;
+  // NOTE: ČEZ data represents grid balance:
+  //   consumption = energy imported from grid
+  //   production = energy exported to grid (FVE surplus)
+  // In any given 15-min interval, typically only one of these is non-zero
+  // (either we import or export, not both simultaneously)
+  
+  let totalGridImport = 0;
+  let totalGridExport = 0;
   let peakConsumption = 0;
   let peakProduction = 0;
   let peakConsumptionDate: Date | null = null;
@@ -93,8 +99,8 @@ function calculateYearStatistics(records: EnergyRecord[], year: number): YearSta
   const daysSet = new Set<string>();
 
   for (const record of records) {
-    totalConsumption += record.consumption;
-    totalProduction += record.production;
+    totalGridImport += record.consumption;
+    totalGridExport += record.production;
     
     if (record.consumption > peakConsumption) {
       peakConsumption = record.consumption;
@@ -111,19 +117,20 @@ function calculateYearStatistics(records: EnergyRecord[], year: number): YearSta
   }
 
   const daysWithData = daysSet.size;
-  const avgDailyConsumption = daysWithData > 0 ? totalConsumption / daysWithData : 0;
-  const avgDailyProduction = daysWithData > 0 ? totalProduction / daysWithData : 0;
+  const avgDailyConsumption = daysWithData > 0 ? totalGridImport / daysWithData : 0;
+  const avgDailyProduction = daysWithData > 0 ? totalGridExport / daysWithData : 0;
   
-  // Self-sufficiency: how much of consumption is covered by own production
-  // This is simplified - actual self-consumption depends on timing
-  const selfSufficiencyRatio = totalConsumption > 0 
-    ? Math.min(1, totalProduction / totalConsumption) * 100 
+  // Ratio of grid export to grid import - indicates how much FVE surplus
+  // could potentially cover grid imports (if storage/timing were perfect)
+  // This is NOT true self-sufficiency (which would require knowing direct self-consumption)
+  const selfSufficiencyRatio = totalGridImport > 0 
+    ? Math.min(100, (totalGridExport / totalGridImport) * 100) 
     : 0;
 
   return {
     year,
-    totalConsumption,
-    totalProduction,
+    totalConsumption: totalGridImport,
+    totalProduction: totalGridExport,
     avgDailyConsumption,
     avgDailyProduction,
     peakConsumption,
@@ -252,7 +259,7 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     allRecords.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     
     // Run battery simulation automatically with new data
-    const { batteryConfig } = get();
+    const { batteryConfig, chartConfig: currentChartConfig } = get();
     let batterySimulation: BatterySimulationResult | null = null;
     if (allRecords.length > 0) {
       try {
@@ -262,13 +269,24 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       }
     }
     
+    // Preserve user's selected years that are still available; if none were selected
+    // (first load), default to the latest year
+    const preservedSelection = currentChartConfig.selectedYears.filter(y => 
+      availableYears.includes(y)
+    );
+    const newSelectedYears = preservedSelection.length > 0
+      ? preservedSelection
+      : availableYears.length > 0 
+        ? [availableYears[availableYears.length - 1]] 
+        : [];
+    
     set({
       yearlyData: newYearlyData,
       allRecords,
       availableYears,
       chartConfig: {
-        ...get().chartConfig,
-        selectedYears: availableYears.length > 0 ? [availableYears[availableYears.length - 1]] : [],
+        ...currentChartConfig,
+        selectedYears: newSelectedYears,
       },
       batterySimulation,
     });

@@ -28,7 +28,9 @@ export function simulateBattery(
   const minChargeLevel = Math.max(capacity - usableCapacity, minReserve);
   
   const batteryStates: BatteryState[] = [];
-  let currentCharge = capacity / 2; // Start at 50% charge
+  // Start battery at minimum charge level (empty state, just above reserve)
+  // This ensures the first measurable effect is real charging, not using pre-existing energy
+  let currentCharge = minChargeLevel;
   
   let totalEnergyStored = 0;
   let totalEnergyUsedFromBattery = 0;
@@ -189,11 +191,14 @@ export function simulateBattery(
   
   for (const [dateStr, data] of dailyData) {
     const isOffGrid = data.gridImport < 0.01; // Less than 10Wh is considered off-grid
-    const totalEnergyNeeded = data.totalConsumption;
-    const energyFromGrid = data.gridImport;
-    const energyFromSelfProduction = totalEnergyNeeded - energyFromGrid;
-    const selfSufficiencyPercent = totalEnergyNeeded > 0 
-      ? Math.min(100, (energyFromSelfProduction / totalEnergyNeeded) * 100)
+    
+    // NOTE: data.totalConsumption is grid import (ČEZ data), not household consumption
+    // "Self-sufficiency" here means: what percentage of the original grid import
+    // was avoided thanks to the battery (virtually covered from stored surplus)
+    const originalImport = data.gridImportOriginal;
+    const coveredByBattery = originalImport - data.gridImport;
+    const selfSufficiencyPercent = originalImport > 0 
+      ? Math.min(100, (coveredByBattery / originalImport) * 100)
       : 100;
     
     if (isOffGrid) {

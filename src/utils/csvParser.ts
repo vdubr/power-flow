@@ -88,18 +88,22 @@ export function decodeWindows1250(buffer: ArrayBuffer): string {
 
 /**
  * Detects if the CSV contains consumption (+A/a+) or production (-A/a-) data
+ * Markers are detected as standalone tokens (surrounded by non-alphanumeric chars)
+ * to avoid matching substrings within other words.
  */
 export function detectDataType(header: string): 'consumption' | 'production' | null {
-  const headerLower = header.toLowerCase();
+  // A marker is "surrounded" if preceded/followed by a non-letter/non-digit char
+  // (or string boundary). We allow: +A, A+, a+, -A, A-, a- as standalone tokens.
+  // Check production first so "A-" is not mistaken (though they can't overlap).
   
-  // Check for consumption patterns: +A, a+
-  if (headerLower.includes('+a') || headerLower.includes('a+')) {
-    return 'consumption';
+  const productionRe = /(^|[^A-Za-z0-9])(-A|A-|a-)([^A-Za-z0-9]|$)/;
+  if (productionRe.test(header)) {
+    return 'production';
   }
   
-  // Check for production patterns: -A, a-
-  if (headerLower.includes('-a') || headerLower.includes('a-')) {
-    return 'production';
+  const consumptionRe = /(^|[^A-Za-z0-9])(\+A|A\+|a\+)([^A-Za-z0-9]|$)/;
+  if (consumptionRe.test(header)) {
+    return 'consumption';
   }
   
   return null;
