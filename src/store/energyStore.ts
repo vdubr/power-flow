@@ -12,6 +12,7 @@ import {
   RawDataPoint,
 } from '../types/energy';
 import { simulateBattery } from '../utils/batteryAlgorithm';
+import { formatLocalDateKey } from '../utils/dateUtils';
 
 interface EnergyStore {
   // Data
@@ -112,7 +113,7 @@ function calculateYearStatistics(records: EnergyRecord[], year: number): YearSta
       peakProductionDate = record.timestamp;
     }
     
-    const dayKey = record.timestamp.toISOString().split('T')[0];
+    const dayKey = formatLocalDateKey(record.timestamp);
     daysSet.add(dayKey);
   }
 

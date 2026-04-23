@@ -7,6 +7,7 @@ import {
   LocationConfig,
 } from '../types/energy';
 import { isDaytime, isDaytimeManual } from './sunCalculations';
+import { formatLocalDateKey, formatLocalMonthKey } from './dateUtils';
 
 /**
  * Get the start of day for a date
@@ -136,13 +137,13 @@ function calculateAggregation(
 export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
   const groups = groupByPeriod(
     records,
-    (date) => date.toISOString().split('T')[0],
+    (date) => formatLocalDateKey(date),
     startOfDay
   );
   
   const result: AggregatedData[] = [];
   
-  for (const [key, groupRecords] of groups) {
+  for (const [, groupRecords] of groups) {
     const start = startOfDay(groupRecords[0].timestamp);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
@@ -165,10 +166,7 @@ export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
 export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
   const groups = groupByPeriod(
     records,
-    (date) => {
-      const weekStart = startOfWeek(date);
-      return weekStart.toISOString().split('T')[0];
-    },
+    (date) => formatLocalDateKey(startOfWeek(date)),
     startOfWeek
   );
   
@@ -197,7 +195,7 @@ export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
 export function aggregateByMonth(records: EnergyRecord[]): AggregatedData[] {
   const groups = groupByPeriod(
     records,
-    (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+    (date) => formatLocalMonthKey(date),
     startOfMonth
   );
   
@@ -229,7 +227,7 @@ export function aggregateByDayNight(
   // Group by date first
   const dayGroups = groupByPeriod(
     records,
-    (date) => date.toISOString().split('T')[0],
+    (date) => formatLocalDateKey(date),
     startOfDay
   );
   

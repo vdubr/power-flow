@@ -6,6 +6,7 @@ import {
   MonthlyBatteryAnalysis,
   DailyGridImport,
 } from '../types/energy';
+import { formatLocalDateKey, formatLocalMonthKey, parseLocalDateKey } from './dateUtils';
 
 /**
  * Simulates battery operation over a period of energy data
@@ -107,7 +108,7 @@ export function simulateBattery(
     totalGridExportWithBattery += gridExport;
     
     // Track daily data
-    const dayKey = record.timestamp.toISOString().split('T')[0];
+    const dayKey = formatLocalDateKey(record.timestamp);
     const dayData = dailyData.get(dayKey) || {
       gridImport: 0,
       gridImportOriginal: 0,
@@ -123,7 +124,7 @@ export function simulateBattery(
     dailyData.set(dayKey, dayData);
     
     // Track monthly data
-    const monthKey = `${record.timestamp.getFullYear()}-${String(record.timestamp.getMonth() + 1).padStart(2, '0')}`;
+    const monthKey = formatLocalMonthKey(record.timestamp);
     const monthData = monthlyData.get(monthKey) || {
       energyStored: 0,
       energyUsed: 0,
@@ -152,7 +153,7 @@ export function simulateBattery(
   const annualSavings = gridImportReduction * electricityPrice;
   
   // Calculate average daily charge cycles
-  const daysSet = new Set(records.map(r => r.timestamp.toISOString().split('T')[0]));
+  const daysSet = new Set(records.map(r => formatLocalDateKey(r.timestamp)));
   const totalDays = daysSet.size;
   const averageDailyChargeCycles = totalDays > 0 
     ? (totalEnergyStored / capacity) / totalDays 
@@ -206,7 +207,7 @@ export function simulateBattery(
     }
     
     dailyGridImport.push({
-      date: new Date(dateStr),
+      date: parseLocalDateKey(dateStr),
       gridImport: data.gridImport,
       gridImportOriginal: data.gridImportOriginal,
       gridExport: data.gridExport,
@@ -251,7 +252,7 @@ export function calculateRecommendedCapacity(records: EnergyRecord[]): number {
   const dailyData = new Map<string, { surplus: number; deficit: number }>();
   
   for (const record of records) {
-    const dayKey = record.timestamp.toISOString().split('T')[0];
+    const dayKey = formatLocalDateKey(record.timestamp);
     const existing = dailyData.get(dayKey) || { surplus: 0, deficit: 0 };
     
     const net = record.production - record.consumption;
