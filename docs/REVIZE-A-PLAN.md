@@ -1,6 +1,10 @@
 # Revize repozitáře a plán prací
 
-Solar Analytics · stav k 8. 9. 2026 · větev `main`, poslední commit `0aea99c`
+Solar Analytics · revize z 8. 9. 2026, plán **implementován 9. 9. 2026** na větvi `implementace-planu`
+
+> **Stav: fáze 0–5 hotové.** Všechny nálezy kromě výslovně uvedených výjimek jsou opravené.
+> Kontroly: ESLint čistý, build projde, 335 unit testů, 22 E2E běhů (desktop i mobil),
+> pokrytí utils 90,8 % a store 95,3 %. Přehled výsledků je v sekci 10 na konci dokumentu.
 
 Doprovodný dokument: [UZIVATEL-A-POTREBY.md](./UZIVATEL-A-POTREBY.md) (kdo je uživatel, jaké otázky si klade, akceptační scénáře U1–U11).
 
@@ -323,3 +327,63 @@ npm run dev -- --port 5173
 | Baterie (KPI, co kdyby, grafy) | `src/components/Statistics/BatteryAnalysis.tsx` |
 | Design tokeny a MUI téma | `src/index.css`, `src/theme/index.ts`, `src/theme/echartsTheme.ts` |
 | Akceptační scénáře | `src/__tests__/userScenarios.test.ts`, `docs/UZIVATEL-A-POTREBY.md` |
+
+
+---
+
+## 10. Výsledek implementace (9. 9. 2026)
+
+Plán byl proveden celý, v pořadí fází 0 → 5. Každá fáze skončila zeleným
+`lint + build + test` a samostatným commitem.
+
+### Co se změřilo
+
+| Ukazatel | Před | Po |
+| --- | --- | --- |
+| Načtené řádky, formát `+A/… [kW]` | 34 675 z 35 040 | 35 040 |
+| Roční součet vs. součet CSV | nesouhlasil | shoda na 4 desetinná místa |
+| Roky po nahrání jednoho exportu | 2 (fantomový 2023) | 1 |
+| Měsíců v analýze baterie | 13 | 12 |
+| Doporučená kapacita | 5 kWh (percentil) | 8,5 kWh (koleno křivky) |
+| Přepočet při tažení slideru | ~280 ms na každý pixel | 9 ms, jen po puštění |
+| Balík ECharts | 1 145 kB (385 kB gzip) | 680 kB (230 kB gzip) |
+| Unit testy | 218 | 335 |
+| E2E testy | žádné | 22 běhů na dvou zařízeních |
+| Pokrytí `src/utils` | neměřitelné (coverage nešlo spustit) | 90,8 % |
+| Nálezy axe (serious a výš) | neměřeno | 0 |
+
+### Rozhodnutí, která byla přijata
+
+Otevřená rozhodnutí z kapitoly 8 byla vyřešena podle doporučení:
+
+1. Simulace baterie respektuje aktivní rozsah, stejně jako graf a statistiky.
+2. „Soběstačnost“ přejmenována na **„Poměr dodávky k odběru“** s vysvětlivkou.
+3. Účinnost (výchozí 90 %) i výkupní cena (výchozí 1,5 Kč/kWh) přidány do konfigurace.
+4. Režim `avg` přejmenován na `years` a v UI na **„Vybrané roky“**.
+5. Časová zóna: testy mají připnutou `Europe/Prague`; aplikace nadále používá
+   zónu prohlížeče a omezení je zdokumentované v README (viz zbývající práce).
+6. `design/solar.zip` a `test-data/` nejsou verzované; z disku smazané nebyly.
+7. Percentilová heuristika nahrazena křivkou úspora–kapacita s detekcí kolena.
+
+### Co zůstává otevřené
+
+| Kód | Proč nebylo provedeno |
+| --- | --- |
+| D7 | Parsování v pevné zóně Europe/Prague. Aplikace stále používá zónu prohlížeče; testy jsou proti tomu odstíněné připnutou zónou. Oprava vyžaduje `Temporal` nebo `date-fns-tz` a dotkne se celé datové vrstvy. |
+| D9 | Poškozené kódování sloupce Status v `public/sample-data/2022`. Nemám čistý zdroj, ze kterého by šla data přegenerovat. Parser to obchází: neplatné statusy pozná podle prefixu i s poškozenou diakritikou. |
+| P2 | Web Worker pro parser a simulaci. Po opravě P1 už měření nic pomalého neukazuje: import ukázkového roku trvá 563 ms včetně vykreslení. Nemá smysl přidávat složitost bez měřitelného problému. |
+| P4 | Zamrzání po scrollování nad grafy se v produkčním buildu nepodařilo reprodukovat. Ukázalo se, že šlo o dev server v kombinaci s rozšířením prohlížeče, ne o aplikaci. |
+| R3 | Soubory mimo repozitář (snímky obrazovky, `.playwright-mcp/`) jsem nemazal, jen je vyloučil z verzování. Mazání cizích souborů nechávám na majiteli. |
+
+### Nové soubory, které stojí za pozornost
+
+| Soubor | Proč vznikl |
+| --- | --- |
+| `src/utils/format.ts` | jediné místo, kde se čísla mění na text pro uživatele |
+| `src/utils/chartSeriesBuilder.ts` | logika hlavního grafu jako čistá funkce, testovatelná bez canvasu |
+| `src/utils/batteryChartOptions.ts` | totéž pro obrazovku baterie |
+| `src/components/Statistics/CapacityAdvisor.tsx` | hlavní výstup aplikace: doporučení i jeho zdůvodnění |
+| `src/components/Configuration/BatteryConfigForm.tsx` | konfigurace oddělená od výsledků, s odloženým přepočtem |
+| `src/theme/echartsCore.ts` | registruje jen ty části ECharts, které se kreslí |
+| `e2e/` | Playwright scénáře E1–E7 |
+| `docs/FLOW.md` | tok aplikace a mapa E2E scénářů |
