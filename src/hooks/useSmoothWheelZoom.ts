@@ -1,5 +1,5 @@
 import { useEffect, useRef, RefObject } from 'react';
-import type ReactECharts from 'echarts-for-react';
+import type ReactEChartsCore from 'echarts-for-react/lib/core';
 import { computeWheelZoomRange, computeWheelPanRange } from '../utils/zoomMath';
 
 /**
@@ -108,7 +108,7 @@ function readGridRect(
  *   return <Box ref={boxRef}><ReactECharts ref={chartRef} ... /></Box>;
  */
 export function useSmoothWheelZoom(
-  chartRef: RefObject<ReactECharts | null>,
+  chartRef: RefObject<ReactEChartsCore | null>,
 ): RefObject<HTMLDivElement | null> {
   const containerRef = useRef<HTMLDivElement | null>(null);
 

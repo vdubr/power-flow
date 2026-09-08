@@ -1,4 +1,4 @@
-import * as echarts from 'echarts';
+import echarts from './echartsCore';
 
 export const OBSERVATORY_THEME_NAME = 'observatory';
 

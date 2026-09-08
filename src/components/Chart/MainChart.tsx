@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useEffect, useCallback } from 'react';
-import ReactECharts from 'echarts-for-react';
+import ReactEChartsCore from 'echarts-for-react/lib/core';
+import echarts from '../../theme/echartsCore';
 import { Paper, Box, Typography, useTheme } from '@mui/material';
 import { visuallyHidden } from '@mui/utils';
 import { useEnergyStore } from '../../store/energyStore';
@@ -17,11 +18,11 @@ import {
 } from '../../utils/chartSeriesBuilder';
 import { CHART_PALETTE } from '../../theme/echartsTheme';
 import { formatAxisNumber, formatDayMonth } from '../../utils/format';
-import { EChartsOption } from 'echarts';
+import type { EChartsOption } from 'echarts';
 
 const MainChart: React.FC = () => {
   const theme = useTheme();
-  const chartRef = useRef<ReactECharts>(null);
+  const chartRef = useRef<ReactEChartsCore>(null);
 
   const yearlyData = useEnergyStore((s) => s.yearlyData);
   const aggregationType = useEnergyStore((s) => s.chartConfig.aggregationType);
@@ -251,7 +252,8 @@ const MainChart: React.FC = () => {
         aria-describedby="main-chart-data-summary"
         sx={{ height: 500 }}
       >
-        <ReactECharts
+        <ReactEChartsCore
+          echarts={echarts}
           ref={chartRef}
           theme="observatory"
           option={options}

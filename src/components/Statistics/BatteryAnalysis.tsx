@@ -8,7 +8,8 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import OfflineBoltIcon from '@mui/icons-material/OfflineBolt';
 import PowerOffIcon from '@mui/icons-material/PowerOff';
-import ReactECharts from 'echarts-for-react';
+import ReactEChartsCore from 'echarts-for-react/lib/core';
+import echarts from '../../theme/echartsCore';
 import { useEnergyStore } from '../../store/energyStore';
 import { useSmoothWheelZoom } from '../../hooks/useSmoothWheelZoom';
 import {
@@ -44,8 +45,8 @@ const BatteryAnalysis: React.FC = () => {
   const setBatteryConfig = useEnergyStore((s) => s.setBatteryConfig);
   const hasData = useEnergyStore((s) => s.allRecords.length > 0);
 
-  const dailyImportChartRef = useRef<ReactECharts>(null);
-  const chargeLevelChartRef = useRef<ReactECharts>(null);
+  const dailyImportChartRef = useRef<ReactEChartsCore>(null);
+  const chargeLevelChartRef = useRef<ReactEChartsCore>(null);
   const dailyImportBoxRef = useSmoothWheelZoom(dailyImportChartRef);
   const chargeLevelBoxRef = useSmoothWheelZoom(chargeLevelChartRef);
 
@@ -219,7 +220,8 @@ const BatteryAnalysis: React.FC = () => {
               role="img"
               aria-label="Sloupcový graf uložené a použité energie po měsících s křivkou úspory."
             >
-              <ReactECharts
+              <ReactEChartsCore
+                echarts={echarts}
                 theme="observatory"
                 option={monthlyOption}
                 style={{ height: '100%', width: '100%' }}
@@ -267,7 +269,8 @@ const BatteryAnalysis: React.FC = () => {
               role="img"
               aria-label={`Sloupcový graf denního dokupu ze sítě. Baterie pokryla ${formatPercent(batterySimulation.importCoveragePercent)} odběru.`}
             >
-              <ReactECharts
+              <ReactEChartsCore
+                echarts={echarts}
                 ref={dailyImportChartRef}
                 theme="observatory"
                 option={dailyImportOption}
@@ -294,7 +297,8 @@ const BatteryAnalysis: React.FC = () => {
               role="img"
               aria-label="Spojnicový graf průměrného denního stavu nabití baterie."
             >
-              <ReactECharts
+              <ReactEChartsCore
+                echarts={echarts}
                 ref={chargeLevelChartRef}
                 theme="observatory"
                 option={chargeLevelOption}

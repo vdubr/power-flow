@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import { Box, Button, Paper, Stack, Typography, Chip } from '@mui/material';
 import { visuallyHidden } from '@mui/utils';
-import ReactECharts from 'echarts-for-react';
+import ReactEChartsCore from 'echarts-for-react/lib/core';
+import echarts from '../../theme/echartsCore';
 import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
 import { CapacityRecommendation } from '../../types/energy';
 import { buildCapacityCurveOption } from '../../utils/batteryChartOptions';
@@ -121,7 +122,8 @@ const CapacityAdvisor: React.FC<CapacityAdvisorProps> = ({
             aria-label={`Graf roční úspory podle kapacity baterie. Doporučená kapacita ${formatNumber(capacity, 1)} kilowatthodin ušetří ${formatCurrency(savingsPerYear)} ročně.`}
           >
             {option && (
-              <ReactECharts
+              <ReactEChartsCore
+                echarts={echarts}
                 theme="observatory"
                 option={option}
                 style={{ height: '100%', width: '100%' }}
