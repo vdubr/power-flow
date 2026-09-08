@@ -161,14 +161,14 @@ describe('StatisticsPanel', () => {
       expect(card).toHaveTextContent('8,0 kWh');
     });
 
-    it('shows self-sufficiency KPI label', () => {
+    it('shows the supply/consumption ratio KPI label', () => {
       seedStore(
         new Map([
           [2023, [makeRecord(2023, 6, 1, 12, 0, 10, 5)]],
         ])
       );
       renderPanel();
-      expect(screen.getByText('Soběstačnost')).toBeInTheDocument();
+      expect(screen.getByText('Poměr dodávky k odběru')).toBeInTheDocument();
     });
 
     it('shows day/night consumption KPI labels', () => {

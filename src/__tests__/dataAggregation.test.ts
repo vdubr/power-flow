@@ -319,8 +319,61 @@ describe('dataAggregation', () => {
     it('uses the provided maxPoints parameter', () => {
       const recs = buildRecords(20);
       const sampled = getRawData(recs, 5);
-      // step = ceil(20/5) = 4 → indices 0, 4, 8, 12, 16
+      // 5 buckets of 4 records each; with uniform values every bucket's peak
+      // resolves to its first record → indices 0, 4, 8, 12, 16.
       expect(sampled.map(r => recs.indexOf(r))).toEqual([0, 4, 8, 12, 16]);
+    });
+
+    it('keeps a consumption spike that a naive every-Nth-record sampler would skip', () => {
+      // 1000 records downsampled to 100 → buckets of 10 records each.
+      // A plain "take every 10th record starting at 0" sampler only ever
+      // looks at indices 0, 10, 20, … and would silently drop this spike.
+      const recs = buildRecords(1000);
+      recs[5] = { ...recs[5], consumption: 999 };
+
+      const sampled = getRawData(recs, 100);
+
+      expect(sampled.some(r => r.consumption === 999)).toBe(true);
+    });
+
+    it('keeps a production spike independently of the consumption peak in the same bucket', () => {
+      const recs = buildRecords(1000);
+      recs[2] = { ...recs[2], consumption: 500 }; // consumption peak of bucket 0
+      recs[7] = { ...recs[7], production: 300 }; // production peak of the same bucket
+
+      const sampled = getRawData(recs, 100);
+
+      expect(sampled.some(r => r.consumption === 500)).toBe(true);
+      expect(sampled.some(r => r.production === 300)).toBe(true);
+    });
+
+    it('keeps a late spike near the end of the series (last, possibly larger, bucket)', () => {
+      const recs = buildRecords(997); // does not divide evenly into 100 buckets
+      recs[996] = { ...recs[996], consumption: 777 };
+
+      const sampled = getRawData(recs, 100);
+
+      expect(sampled.some(r => r.consumption === 777)).toBe(true);
+    });
+
+    it('returns records in chronological order', () => {
+      const recs = buildRecords(1000);
+      recs[123] = { ...recs[123], consumption: 42 };
+      recs[456] = { ...recs[456], production: 42 };
+
+      const sampled = getRawData(recs, 100);
+
+      for (let i = 1; i < sampled.length; i++) {
+        expect(sampled[i].timestamp.getTime()).toBeGreaterThanOrEqual(
+          sampled[i - 1].timestamp.getTime()
+        );
+      }
+    });
+
+    it('never returns more than twice maxPoints records', () => {
+      const recs = buildRecords(5000);
+      const sampled = getRawData(recs, 100);
+      expect(sampled.length).toBeLessThanOrEqual(200);
     });
   });
 

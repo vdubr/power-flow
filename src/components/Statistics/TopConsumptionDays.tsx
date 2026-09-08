@@ -1,12 +1,18 @@
 import React, { useMemo } from 'react';
-import { Box, Stack, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { EnergyRecord } from '../../types/energy';
 import { getTopConsumptionDays } from '../../utils/dataAggregation';
+import { formatDate, formatKwh, formatPercent } from '../../utils/format';
 
 interface TopConsumptionDaysProps {
   records: EnergyRecord[];
 }
 
+/**
+ * Rendered as a native <ol>/<li> list with one accessible label per row, so a
+ * screen reader gets a full sentence ("1. místo: …") instead of silently
+ * skipping the colour bar, which is decorative and marked `aria-hidden`.
+ */
 const TopConsumptionDays: React.FC<TopConsumptionDaysProps> = ({ records }) => {
   const top = useMemo(() => getTopConsumptionDays(records, 10), [records]);
 
@@ -27,17 +33,20 @@ const TopConsumptionDays: React.FC<TopConsumptionDaysProps> = ({ records }) => {
           — TOP 10
         </Typography>
       </Typography>
-      <Stack spacing={0.5}>
+      <Box
+        component="ol"
+        aria-label="Deset dnů s nejvyšší spotřebou, seřazeno sestupně"
+        sx={{ listStyle: 'none', m: 0, p: 0 }}
+      >
         {top.map((d, i) => {
           const pct = max > 0 ? (d.consumption / max) * 100 : 0;
-          const dateStr = d.date.toLocaleDateString('cs-CZ', {
-            day: 'numeric',
-            month: 'numeric',
-            year: 'numeric',
-          });
+          const dateStr = formatDate(d.date);
+          const valueStr = formatKwh(d.consumption);
           return (
             <Box
-              key={d.date.toISOString()}
+              component="li"
+              key={d.date.getTime()}
+              aria-label={`${i + 1}. místo: ${dateStr}, spotřeba ${valueStr}, ${formatPercent(pct, 0)} maxima`}
               sx={{
                 display: 'grid',
                 gridTemplateColumns: '32px 110px 1fr 90px',
@@ -47,20 +56,22 @@ const TopConsumptionDays: React.FC<TopConsumptionDaysProps> = ({ records }) => {
               }}
             >
               <Typography
+                aria-hidden="true"
                 variant="body2"
                 fontWeight={700}
                 sx={{ color: 'var(--color-primary)', textAlign: 'center' }}
               >
                 {i + 1}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography aria-hidden="true" variant="body2" color="text.secondary">
                 {dateStr}
               </Typography>
               <Box
+                aria-hidden="true"
                 sx={{
                   height: 11,
                   borderRadius: 999,
-                  bgcolor: 'rgba(255,255,255,0.05)',
+                  bgcolor: 'color-mix(in oklab, var(--color-muted-foreground) 12%, transparent)',
                   border: '1px solid var(--color-border)',
                   overflow: 'hidden',
                 }}
@@ -74,13 +85,13 @@ const TopConsumptionDays: React.FC<TopConsumptionDaysProps> = ({ records }) => {
                   }}
                 />
               </Box>
-              <Typography variant="body2" fontWeight={700} sx={{ textAlign: 'right' }}>
-                {d.consumption.toFixed(1)} kWh
+              <Typography aria-hidden="true" variant="body2" fontWeight={700} sx={{ textAlign: 'right' }}>
+                {valueStr}
               </Typography>
             </Box>
           );
         })}
-      </Stack>
+      </Box>
     </Box>
   );
 };

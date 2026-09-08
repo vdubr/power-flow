@@ -37,3 +37,9 @@ test-data
 
 # Redundantní archiv – obsah je rozbalený v design/design_handoff/
 design/solar.zip
+
+# Playwright
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache

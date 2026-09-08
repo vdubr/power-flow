@@ -1,32 +1,45 @@
 import React from 'react';
 import { Box, Paper, Stack, Typography } from '@mui/material';
 import Grid from '@mui/material/Grid';
+import LoginIcon from '@mui/icons-material/Login';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import DifferenceIcon from '@mui/icons-material/Difference';
 
 interface GuideStep {
   number: number;
   title: string;
   subtitle: string;
-  placeholder: string;
+  icon: React.ReactNode;
+  accent: string;
 }
 
+// We do not ship real screenshots of the ČEZ Distribuce portal (it changes
+// layout regularly and we have no licence to redistribute it). Rather than
+// leaving an empty dashed box with a caption pretending to be an image — which
+// reads as a broken/missing asset — each step gets a schematic icon in the
+// project's own design language (F6). It illustrates the *kind* of screen the
+// user will see without claiming to reproduce it.
 const STEPS: GuideStep[] = [
   {
     number: 1,
     title: 'Přihlášení',
     subtitle: 'portál ČEZ Distribuce → přihlášení',
-    placeholder: 'screenshot: přihlašovací obrazovka',
+    icon: <LoginIcon sx={{ fontSize: 44 }} />,
+    accent: 'var(--color-primary)',
   },
   {
     number: 2,
     title: 'Export měření',
     subtitle: 'Měření → Export → období + CSV',
-    placeholder: 'screenshot: dialog exportu měření',
+    icon: <FileDownloadIcon sx={{ fontSize: 44 }} />,
+    accent: 'var(--chart-2)',
   },
   {
     number: 3,
     title: 'Dva soubory',
     subtitle: 'Spotřeba (+A) a Výroba (−A) zvlášť',
-    placeholder: 'screenshot: dva stažené CSV soubory',
+    icon: <DifferenceIcon sx={{ fontSize: 44 }} />,
+    accent: 'var(--chart-3)',
   },
 ];
 
@@ -75,25 +88,16 @@ const CezGuide: React.FC = () => {
 
               <Box
                 className="blueprint-surface"
+                aria-hidden="true"
                 sx={{
                   height: 120,
-                  borderStyle: 'dashed',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  px: 2,
-                  textAlign: 'center',
+                  color: step.accent,
                 }}
               >
-                <Typography
-                  variant="caption"
-                  sx={{
-                    fontFamily: 'var(--font-mono)',
-                    color: 'var(--color-muted-foreground)',
-                  }}
-                >
-                  {step.placeholder}
-                </Typography>
+                {step.icon}
               </Box>
             </Stack>
           </Grid>

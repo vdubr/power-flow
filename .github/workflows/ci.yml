@@ -37,3 +37,32 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 14
+
+  e2e:
+    name: E2E testy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalace závislostí
+        run: npm ci
+
+      - name: Instalace prohlížečů
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright
+        run: npm run test:e2e
+
+      - name: Uložit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14

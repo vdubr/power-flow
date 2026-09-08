@@ -480,6 +480,33 @@ describe('U10 správa dat', () => {
     expect(store().batterySimulation!.monthlyAnalysis.some((m) => m.year === 2025)).toBe(false);
   });
 
+  it('U10.3 nahrání spotřeby a poté výroby zvlášť nesmí přepsat už načtená data', () => {
+    // Uživatel běžně stahuje dva soubory a může je nahrát postupně.
+    store().addData(sample2022.consumption.data, []);
+    const afterConsumption = store().yearlyData.get(2022)!.statistics.totalConsumption;
+    expect(afterConsumption).toBeGreaterThan(0);
+    expect(store().yearlyData.get(2022)!.hasProduction).toBe(false);
+
+    store().addData([], sample2022.production.data);
+    const merged = store().yearlyData.get(2022)!;
+    // Spotřeba zůstala nedotčená a výroba přibyla.
+    expect(merged.statistics.totalConsumption).toBeCloseTo(afterConsumption, 6);
+    expect(merged.statistics.totalProduction).toBeGreaterThan(0);
+    expect(merged.hasProduction).toBe(true);
+    expect(merged.hasConsumption).toBe(true);
+  });
+
+  it('U10.4 opakované nahrání téhož souboru hodnoty nezdvojnásobí', () => {
+    loadYear(sample2022);
+    const first = store().yearlyData.get(2022)!.statistics.totalConsumption;
+    const recordCount = store().allRecords.length;
+
+    loadYear(sample2022);
+    const second = store().yearlyData.get(2022)!.statistics;
+    expect(second.totalConsumption).toBeCloseTo(first, 6);
+    expect(store().allRecords).toHaveLength(recordCount);
+  });
+
   it('U10.2 „Vymazat všechna data“ vrátí aplikaci do prázdného stavu', () => {
     loadYear(sample2022);
     store().clearData();

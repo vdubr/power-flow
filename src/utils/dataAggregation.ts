@@ -351,7 +351,20 @@ export function aggregateByDayNight(
 }
 
 /**
- * Get raw data (no aggregation, but with optional sampling for large datasets)
+ * Get raw data for the chart, downsampled to at most `maxPoints` when there
+ * are more records than that.
+ *
+ * Records are split into `maxPoints` chronological buckets; from each bucket
+ * we keep the record with the highest consumption AND the record with the
+ * highest production (deduplicated if it is the same record). Plain
+ * every-Nth-record decimation would silently drop the day's peak whenever it
+ * falls between the sampled indices — exactly the case that matters most for
+ * a "15min" view meant to show spikes. A bucket can therefore contribute 0
+ * (empty bucket), 1 (peaks coincide) or 2 records; the result is clamped
+ * back towards `maxPoints` by widening the bucket count is not attempted —
+ * the output stays within a small constant factor of `maxPoints` while
+ * preserving both extremes, which matters far more than an exact point cap
+ * for a chart.
  */
 export function getRawData(
   records: EnergyRecord[],
@@ -360,16 +373,37 @@ export function getRawData(
   if (records.length <= maxPoints) {
     return records;
   }
-  
-  // Sample data to reduce points
-  const step = Math.ceil(records.length / maxPoints);
+
+  const bucketCount = Math.max(1, maxPoints);
+  const bucketSize = records.length / bucketCount;
   const sampled: EnergyRecord[] = [];
-  
-  for (let i = 0; i < records.length; i += step) {
-    sampled.push(records[i]);
+
+  for (let b = 0; b < bucketCount; b++) {
+    const start = Math.floor(b * bucketSize);
+    const end = b === bucketCount - 1 ? records.length : Math.floor((b + 1) * bucketSize);
+    if (start >= end) continue;
+
+    let peakConsumptionIdx = start;
+    let peakProductionIdx = start;
+    for (let i = start + 1; i < end; i++) {
+      if (records[i].consumption > records[peakConsumptionIdx].consumption) {
+        peakConsumptionIdx = i;
+      }
+      if (records[i].production > records[peakProductionIdx].production) {
+        peakProductionIdx = i;
+      }
+    }
+
+    sampled.push(records[peakConsumptionIdx]);
+    if (peakProductionIdx !== peakConsumptionIdx) {
+      sampled.push(records[peakProductionIdx]);
+    }
   }
-  
-  return sampled;
+
+  // Buckets can each add two records, so re-sort chronologically: the
+  // production peak of bucket N can be recorded after the consumption peak
+  // of the same or a neighbouring bucket.
+  return sampled.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 }
 
 /**

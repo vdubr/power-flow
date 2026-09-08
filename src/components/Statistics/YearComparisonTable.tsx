@@ -7,10 +7,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Typography,
 } from '@mui/material';
 import { useEnergyStore } from '../../store/energyStore';
-import { formatEnergy } from '../../utils/format';
+import { formatEnergy, formatKwh, formatPercent } from '../../utils/format';
+import { SectionHeader } from '../Common';
 
 interface YearStat {
   year: number;
@@ -20,6 +20,19 @@ interface YearStat {
   avgDailyProduction: number;
   selfSufficiency: number;
 }
+
+/** Visually hidden but readable to assistive technology, e.g. for the table caption. */
+const srOnlySx = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clipPath: 'inset(50%)',
+  whiteSpace: 'nowrap',
+  border: 0,
+} as const;
 
 const YearComparisonTable: React.FC = () => {
   const yearlyData = useEnergyStore((s) => s.yearlyData);
@@ -46,30 +59,31 @@ const YearComparisonTable: React.FC = () => {
 
   return (
     <Box>
-      <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-        Porovnání let
-      </Typography>
+      <SectionHeader title="Porovnání let" variant="section" />
       <TableContainer>
         <Table size="small">
+          <caption style={srOnlySx as React.CSSProperties}>
+            Porovnání spotřeby, výroby a poměru dodávky k odběru mezi vybranými roky
+          </caption>
           <TableHead>
             <TableRow>
-              <TableCell>Rok</TableCell>
-              <TableCell align="right">Spotřeba</TableCell>
-              <TableCell align="right">Výroba</TableCell>
-              <TableCell align="right">Ø Spotřeba/den</TableCell>
-              <TableCell align="right">Ø Výroba/den</TableCell>
-              <TableCell align="right">Soběstačnost</TableCell>
+              <TableCell component="th" scope="col">Rok</TableCell>
+              <TableCell component="th" scope="col" align="right">Spotřeba</TableCell>
+              <TableCell component="th" scope="col" align="right">Výroba</TableCell>
+              <TableCell component="th" scope="col" align="right">Ø Spotřeba/den</TableCell>
+              <TableCell component="th" scope="col" align="right">Ø Výroba/den</TableCell>
+              <TableCell component="th" scope="col" align="right">Dodávka/odběr</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {yearStats.map((ys) => (
               <TableRow key={ys.year}>
-                <TableCell>{ys.year}</TableCell>
+                <TableCell component="th" scope="row">{ys.year}</TableCell>
                 <TableCell align="right">{formatEnergy(ys.consumption)}</TableCell>
                 <TableCell align="right">{formatEnergy(ys.production)}</TableCell>
-                <TableCell align="right">{ys.avgDailyConsumption.toFixed(1)} kWh</TableCell>
-                <TableCell align="right">{ys.avgDailyProduction.toFixed(1)} kWh</TableCell>
-                <TableCell align="right">{ys.selfSufficiency.toFixed(1)} %</TableCell>
+                <TableCell align="right">{formatKwh(ys.avgDailyConsumption)}</TableCell>
+                <TableCell align="right">{formatKwh(ys.avgDailyProduction)}</TableCell>
+                <TableCell align="right">{formatPercent(ys.selfSufficiency)}</TableCell>
               </TableRow>
             ))}
           </TableBody>

@@ -5,7 +5,8 @@ import {
   Box,
   Card,
   CardContent,
-  Stack,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
@@ -14,11 +15,13 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import SolarPowerIcon from '@mui/icons-material/SolarPower';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import NightlightIcon from '@mui/icons-material/Nightlight';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { useEnergyStore } from '../../store/energyStore';
-import { formatEnergy } from '../../utils/format';
+import { formatEnergy, formatNumber, formatPercent, formatDateTime } from '../../utils/format';
 import { aggregateByDayNight } from '../../utils/dataAggregation';
 import { getDefaultLocation } from '../../utils/sunCalculations';
-import { RangeControl } from '../Common';
+import { calculateYearStatistics } from '../../utils/energyData';
+import { RangeControl, SectionHeader } from '../Common';
 import TopConsumptionDays from './TopConsumptionDays';
 
 interface StatCardProps {
@@ -27,9 +30,11 @@ interface StatCardProps {
   subtitle?: string;
   icon: React.ReactNode;
   color: string;
+  /** Extra explanation shown in a tooltip next to the title, for metrics whose name alone can mislead. */
+  tooltip?: string;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, subtitle, icon, color }) => (
+const StatCard: React.FC<StatCardProps> = ({ title, value, subtitle, icon, color, tooltip }) => (
   <Card
     className="paper-card fade-up"
     sx={{
@@ -60,6 +65,17 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, subtitle, icon, color
         <Typography className="micro-label" variant="overline">
           {title}
         </Typography>
+        {tooltip && (
+          <Tooltip title={tooltip} arrow>
+            <IconButton
+              size="small"
+              aria-label={`Vysvětlení metriky: ${title}`}
+              sx={{ ml: 0.25, p: 0.25, color: 'var(--color-muted-foreground)' }}
+            >
+              <InfoOutlinedIcon sx={{ fontSize: 15 }} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
       <Typography variant="h5" fontWeight={600}>
         {value}
@@ -72,17 +88,6 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, subtitle, icon, color
     </CardContent>
   </Card>
 );
-
-const formatDate = (date: Date | null): string => {
-  if (!date) return '-';
-  return date.toLocaleDateString('cs-CZ', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
 
 const StatisticsPanel: React.FC = () => {
   const allRecords = useEnergyStore((s) => s.allRecords);
@@ -99,34 +104,14 @@ const StatisticsPanel: React.FC = () => {
     [getActiveRecords, rangeMode, selectedYears, timeRange, allRecords],
   );
 
-  const summary = useMemo(() => {
-    let totalConsumption = 0;
-    let totalProduction = 0;
-    let peakConsumption = 0;
-    let peakConsumptionDate: Date | null = null;
-
-    for (const record of activeRecords) {
-      totalConsumption += record.consumption;
-      totalProduction += record.production;
-
-      if (record.consumption > peakConsumption) {
-        peakConsumption = record.consumption;
-        peakConsumptionDate = record.timestamp;
-      }
-    }
-
-    const selfSufficiency = totalConsumption > 0
-      ? Math.min(100, (totalProduction / totalConsumption) * 100)
-      : 0;
-
-    return {
-      totalConsumption,
-      totalProduction,
-      peakConsumption,
-      peakConsumptionDate,
-      selfSufficiency,
-    };
-  }, [activeRecords]);
+  // `calculateYearStatistics` is the single source of truth for these sums
+  // (also used by the store for the per-year YearStatistics). Passing it the
+  // active range instead of a whole year's records works the same way,
+  // since it only ever iterates the list it is given.
+  const summary = useMemo(
+    () => calculateYearStatistics(activeRecords, 0),
+    [activeRecords],
+  );
 
   const dayNightTotals = useMemo(() => {
     if (activeRecords.length === 0) {
@@ -163,7 +148,7 @@ const StatisticsPanel: React.FC = () => {
   const rangeSubtitle = useMemo(() => {
     switch (rangeMode) {
       case 'years':
-        return 'Ø všech let';
+        return 'Součet za vybrané roky';
       case 'last': {
         const targetYear = selectedYears.length > 0
           ? Math.max(...selectedYears)
@@ -183,17 +168,7 @@ const StatisticsPanel: React.FC = () => {
   if (isEmpty) {
     return (
       <Paper className="paper-card" sx={{ p: 3 }}>
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          mb={2}
-          flexWrap="wrap"
-          gap={2}
-        >
-          <Typography variant="h6">Statistiky</Typography>
-          <RangeControl />
-        </Stack>
+        <SectionHeader title="Statistiky" action={<RangeControl />} />
         <Typography variant="body2" color="text.secondary">
           Vyberte rok pro zobrazení statistik
         </Typography>
@@ -206,23 +181,13 @@ const StatisticsPanel: React.FC = () => {
     totalProduction,
     peakConsumption,
     peakConsumptionDate,
-    selfSufficiency,
+    selfSufficiencyRatio,
   } = summary;
   const { dayConsumptionTotal, nightConsumptionTotal, dayPercent, nightPercent } = dayNightTotals;
 
   return (
     <Paper className="paper-card" sx={{ p: 3 }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        mb={2}
-        flexWrap="wrap"
-        gap={2}
-      >
-        <Typography variant="h6">Statistiky</Typography>
-        <RangeControl />
-      </Stack>
+      <SectionHeader title="Statistiky" action={<RangeControl />} />
 
       {/* 6 KPI tiles */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -246,18 +211,24 @@ const StatisticsPanel: React.FC = () => {
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <StatCard
-            title="Soběstačnost"
-            value={`${selfSufficiency.toFixed(1)} %`}
-            subtitle="Výroba / Spotřeba"
+            title="Poměr dodávky k odběru"
+            value={formatPercent(selfSufficiencyRatio)}
+            subtitle="Horní odhad, ne spotřeba domu"
             icon={<SolarPowerIcon />}
             color="var(--chart-2)"
+            tooltip={
+              'Kolik procent odběru ze sítě by teoreticky pokryly přetoky dodané do sítě, ' +
+              'kdyby šly použít přesně v okamžiku odběru (nejvýš 100 %). Nejde o skutečný ' +
+              'podíl vlastní energie na spotřebě domácnosti – ten by vyžadoval znát hrubou ' +
+              'výrobu FVE a spotřebu domu bez přetoků, což z bilančních dat ČEZ nelze zjistit.'
+            }
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
           <StatCard
             title="Špička spotřeby"
-            value={`${peakConsumption.toFixed(2)} kW`}
-            subtitle={formatDate(peakConsumptionDate)}
+            value={`${formatNumber(peakConsumption, 2)} kW`}
+            subtitle={peakConsumptionDate ? formatDateTime(peakConsumptionDate) : '–'}
             icon={<BoltIcon />}
             color="var(--chart-1)"
           />
@@ -266,7 +237,7 @@ const StatisticsPanel: React.FC = () => {
           <StatCard
             title="Spotřeba ve dne"
             value={formatEnergy(dayConsumptionTotal)}
-            subtitle={`${dayPercent.toFixed(0)} %`}
+            subtitle={formatPercent(dayPercent, 0)}
             icon={<WbSunnyIcon />}
             color="var(--chart-1)"
           />
@@ -275,7 +246,7 @@ const StatisticsPanel: React.FC = () => {
           <StatCard
             title="Spotřeba v noci"
             value={formatEnergy(nightConsumptionTotal)}
-            subtitle={`${nightPercent.toFixed(0)} %`}
+            subtitle={formatPercent(nightPercent, 0)}
             icon={<NightlightIcon />}
             color="var(--chart-3)"
           />

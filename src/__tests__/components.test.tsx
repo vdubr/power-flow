@@ -68,7 +68,7 @@ beforeEach(() => {
 describe('RangeControl', () => {
   it('renders three toggle buttons', () => {
     render(<RangeControl />);
-    expect(screen.getByRole('button', { name: 'Ø průměr' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Vybrané roky' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Poslední rok' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Výseč v grafu' })).toBeInTheDocument();
   });
@@ -129,7 +129,7 @@ describe('TopConsumptionDays', () => {
     }
     render(<TopConsumptionDays records={records} />);
     // Each row contains "X.0 kWh" — find them via text matcher
-    const valueCells = screen.getAllByText(/\d+\.\d kWh$/);
+    const valueCells = screen.getAllByText(/\d+,\d kWh$/);
     expect(valueCells.length).toBeLessThanOrEqual(10);
     expect(valueCells.length).toBeGreaterThan(0);
   });
@@ -141,9 +141,9 @@ describe('TopConsumptionDays', () => {
       makeRecord('2024-01-17T12:00', 5, 0),
     ];
     render(<TopConsumptionDays records={records} />);
-    const valueCells = screen.getAllByText(/\d+\.\d kWh$/);
-    // First entry should be the largest (9.0 kWh)
-    expect(valueCells[0]).toHaveTextContent('9.0 kWh');
+    const valueCells = screen.getAllByText(/\d+,\d kWh$/);
+    // First entry should be the largest (9,0 kWh)
+    expect(valueCells[0]).toHaveTextContent('9,0 kWh');
   });
 });
 

@@ -17,9 +17,12 @@ import {
 import { useEnergyStore } from '../../store/energyStore';
 import { AggregationType, LocationConfig } from '../../types/energy';
 import { CZECH_LOCATIONS, getDefaultLocation } from '../../utils/sunCalculations';
+import { isTimeAxisAggregation } from '../../utils/chartSeriesBuilder';
+import { MAX_RAW_CHART_POINTS } from '../../constants';
+import { formatCount } from '../../utils/format';
 
 const AGGREGATION_OPTIONS: Array<{ value: AggregationType; label: string; description: string }> = [
-  { value: 'raw', label: '15min intervaly', description: 'Surová data (omezeno na 5000 bodů)' },
+  { value: 'raw', label: '15min intervaly', description: `Surová data (omezeno na ${formatCount(MAX_RAW_CHART_POINTS)} bodů)` },
   { value: 'hourly', label: '1 hodina', description: 'Součet po hodinách' },
   { value: 'dayNight', label: 'Den/Noc', description: 'Agregace podle denní/noční doby' },
   { value: 'daily', label: 'Denní', description: 'Součet za každý den' },
@@ -84,8 +87,10 @@ const ChartControls: React.FC = () => {
       <Stack spacing={3}>
         {/* Aggregation type */}
         <FormControl fullWidth size="small">
-          <InputLabel>Agregace</InputLabel>
+          <InputLabel id="aggregation-label">Agregace</InputLabel>
           <Select
+            labelId="aggregation-label"
+            id="aggregation-select"
             value={aggregationType}
             label="Agregace"
             onChange={(e) => setAggregationType(e.target.value as AggregationType)}
@@ -116,7 +121,7 @@ const ChartControls: React.FC = () => {
                 onChange={(e) => setShowSunOverlay(e.target.checked)}
                 disabled={
                   !hasData ||
-                  !(aggregationType === 'raw' || aggregationType === 'hourly') ||
+                  !isTimeAxisAggregation(aggregationType) ||
                   selectedYears.length !== 1
                 }
               />
@@ -124,13 +129,13 @@ const ChartControls: React.FC = () => {
             label={<Typography variant="body2">Východ / západ slunce</Typography>}
           />
           {showSunOverlay &&
-            !(aggregationType === 'raw' || aggregationType === 'hourly') && (
+            !isTimeAxisAggregation(aggregationType) && (
               <Typography variant="caption" color="text.secondary" display="block">
                 Overlay je dostupný jen pro 15min a 1h zobrazení
               </Typography>
             )}
           {showSunOverlay &&
-            (aggregationType === 'raw' || aggregationType === 'hourly') &&
+            isTimeAxisAggregation(aggregationType) &&
             selectedYears.length > 1 && (
               <Typography variant="caption" color="text.secondary" display="block">
                 Overlay je dostupný jen při výběru jednoho roku
@@ -179,7 +184,7 @@ const ChartControls: React.FC = () => {
                     size="small"
                     value={dayNightConfig.manualDayStart}
                     onChange={(e) => handleTimeChange('manualDayStart', e.target.value)}
-                    InputLabelProps={{ shrink: true }}
+                    slotProps={{ inputLabel: { shrink: true } }}
                   />
                   <TextField
                     label="Konec dne"
@@ -187,7 +192,7 @@ const ChartControls: React.FC = () => {
                     size="small"
                     value={dayNightConfig.manualDayEnd}
                     onChange={(e) => handleTimeChange('manualDayEnd', e.target.value)}
-                    InputLabelProps={{ shrink: true }}
+                    slotProps={{ inputLabel: { shrink: true } }}
                   />
                 </Stack>
               ) : (

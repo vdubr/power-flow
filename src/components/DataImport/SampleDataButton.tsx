@@ -10,10 +10,11 @@ import type { SxProps, Theme } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { parseCSVFile } from '../../utils/csvParser';
 import { useEnergyStore } from '../../store/energyStore';
-import { RawDataPoint } from '../../types/energy';
+import { DataQuality, RawDataPoint } from '../../types/energy';
 
 interface SampleDataButtonProps {
-  onLoaded?: () => void;
+  /** Called after a successful load with the combined quality of both files. */
+  onLoaded?: (quality: DataQuality) => void;
   variant?: 'outlined' | 'text';
   size?: 'small' | 'medium';
   sx?: SxProps<Theme>;
@@ -70,7 +71,15 @@ const SampleDataButton: React.FC<SampleDataButtonProps> = ({
       addData(consumptionData, productionData);
 
       if (onLoaded) {
-        onLoaded();
+        const combinedQuality: DataQuality = {
+          totalRows: consumptionResult.quality.totalRows + productionResult.quality.totalRows,
+          validRows: consumptionResult.quality.validRows + productionResult.quality.validRows,
+          invalidStatusRows:
+            consumptionResult.quality.invalidStatusRows + productionResult.quality.invalidStatusRows,
+          rejectedRows:
+            consumptionResult.quality.rejectedRows + productionResult.quality.rejectedRows,
+        };
+        onLoaded(combinedQuality);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
