@@ -10,7 +10,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEnergyStore } from '../../store/energyStore';
-import { formatEnergy } from '../../utils/batteryAlgorithm';
+import { formatEnergy } from '../../utils/format';
 
 interface YearStat {
   year: number;

@@ -53,8 +53,14 @@ export interface YearStatistics {
 // Aggregation types
 export type AggregationType = 'raw' | 'hourly' | 'dayNight' | 'daily' | 'weekly' | 'monthly';
 
-// Range mode controls how the active records subset is selected
-export type RangeMode = 'avg' | 'last' | 'selection';
+/**
+ * Which subset of the loaded data every panel works with.
+ *
+ * `years` – the years ticked in the year badges (the default)
+ * `last` – only the most recent of those years
+ * `selection` – the range brushed in the chart
+ */
+export type RangeMode = 'years' | 'last' | 'selection';
 
 export interface DayNightData {
   date: Date;
@@ -69,7 +75,9 @@ export interface BatteryConfig {
   capacity: number; // kWh - total battery capacity
   maxDischargePercent: number; // % - maximum discharge depth (e.g., 80 means can discharge to 20%)
   minReserve: number; // kWh - minimum reserve to keep
-  electricityPrice: number; // CZK/kWh - price of electricity from grid
+  electricityPrice: number; // CZK/kWh - price of electricity bought from the grid
+  roundTripEfficiency: number; // % - share of stored energy that comes back out
+  feedInPrice: number; // CZK/kWh - what exported surplus would have earned instead
 }
 
 export interface BatteryState {
@@ -88,20 +96,59 @@ export interface DailyAverageLevel {
   avgCharge: number; // kWh - average charge level for the day
 }
 
+/**
+ * One point of the "what would this capacity give me" curve. Produced for a
+ * range of capacities so the recommendation can be shown, not just stated.
+ */
+export interface CapacityCurvePoint {
+  capacity: number; // kWh
+  savingsPerYear: number; // CZK per year, net of the lost feed-in revenue
+  gridImportReductionPerYear: number; // kWh per year
+  offGridDaysPerYear: number; // days per year with no grid import
+}
+
+export interface CapacityRecommendation {
+  capacity: number; // kWh - the recommended size
+  savingsPerYear: number; // CZK per year at that size
+  /** Share of the largest simulated battery's savings this size already captures (0–1). */
+  benefitShare: number;
+  /** What one more kWh would add per year at that size, in CZK. */
+  marginalSavingsPerKwh: number;
+  curve: CapacityCurvePoint[];
+}
+
 export interface BatterySimulationResult {
   config: BatteryConfig;
-  recommendedCapacity: number;
-  annualSavings: number; // CZK
-  totalEnergyStored: number; // kWh
-  totalEnergyUsedFromBattery: number; // kWh
-  gridExportReduction: number; // kWh - how much less exported to grid
-  gridImportReduction: number; // kWh - how much less imported from grid
+  /** Number of distinct days covered by the simulated records. */
+  daysSimulated: number;
+
+  /** Net savings over the whole simulated period, in CZK. */
+  totalSavings: number;
+  /** Net savings normalised to a single year, in CZK. This is what UI labels "per year". */
+  savingsPerYear: number;
+  /** Money not spent on grid electricity, before subtracting the lost feed-in revenue. */
+  avoidedPurchasePerYear: number;
+  /** Feed-in revenue given up by storing surplus instead of exporting it. */
+  lostFeedInPerYear: number;
+
+  totalEnergyStored: number; // kWh - energy that actually entered the battery
+  totalEnergyUsedFromBattery: number; // kWh - energy taken back out
+  gridExportReduction: number; // kWh - surplus kept instead of exported
+  gridImportReduction: number; // kWh - grid purchase avoided (equals energy used from battery)
+  /** Share of the original grid import covered by the battery, weighted by energy (0–100). */
+  importCoveragePercent: number;
+
   averageDailyChargeCycles: number;
   dailyAverageLevels: DailyAverageLevel[]; // Pre-aggregated daily averages (replaces batteryStates)
   monthlyAnalysis: MonthlyBatteryAnalysis[];
   dailyGridImport: DailyGridImport[]; // Daily grid import analysis
-  offGridDays: number; // Number of days that could run off-grid
-  offGridDaysPercent: number; // Percentage of days that could run off-grid
+
+  offGridDays: number; // days with no grid import once the battery is in place
+  offGridDaysPercent: number; // share of simulated days
+  /** Days that already needed no grid import without any battery. */
+  baselineOffGridDays: number;
+  /** Days the battery actually turned into off-grid days. */
+  offGridDaysGained: number;
 }
 
 export interface MonthlyBatteryAnalysis {
@@ -118,8 +165,11 @@ export interface DailyGridImport {
   gridImport: number; // kWh - energy imported from grid with battery
   gridImportOriginal: number; // kWh - energy that would be imported without battery
   gridExport: number; // kWh - energy exported to grid with battery
-  isOffGrid: boolean; // true if no grid import needed
-  selfSufficiencyPercent: number; // percentage of consumption covered by FVE + battery
+  isOffGrid: boolean; // true if no grid import is needed once the battery is in place
+  /** True if the day needed no grid import even without a battery. */
+  wasAlreadyOffGrid: boolean;
+  /** Share of this day's original grid import that the battery covered (0–100). */
+  importCoveredPercent: number;
 }
 
 // Location for sun calculations

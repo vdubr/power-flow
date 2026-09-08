@@ -55,7 +55,7 @@ function seedStore(yearMap: Map<number, EnergyRecord[]>, selectedYears?: number[
       ...useEnergyStore.getState().chartConfig,
       selectedYears: selectedYears ?? availableYears,
       timeRange: null,
-      rangeMode: 'avg',
+      rangeMode: 'years',
     },
     batterySimulation: null,
   });

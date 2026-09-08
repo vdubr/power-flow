@@ -69,6 +69,8 @@ const DEFAULT_BATTERY: BatteryConfig = {
   maxDischargePercent: 80,
   minReserve: 1,
   electricityPrice: 6,
+  roundTripEfficiency: 90,
+  feedInPrice: 1.5,
 };
 
 function loadYear(sample: typeof sample2022) {
@@ -245,17 +247,52 @@ describe('U4 přetoky využitelné baterií', () => {
 describe('U5 doporučení baterie a úspora', () => {
   it('U5.1 doporučená kapacita je realistická (2–30 kWh) a zaokrouhlená na 0,5 kWh', () => {
     loadYear(sample2022);
-    const { recommendedCapacity } = store().batterySimulation!;
-    expect(recommendedCapacity).toBeGreaterThanOrEqual(2);
-    expect(recommendedCapacity).toBeLessThanOrEqual(30);
-    expect((recommendedCapacity * 2) % 1).toBe(0);
+    const rec = store().capacityRecommendation!;
+    expect(rec.capacity).toBeGreaterThanOrEqual(2);
+    expect(rec.capacity).toBeLessThanOrEqual(30);
+    expect((rec.capacity * 2) % 1).toBe(0);
   });
 
-  it('U5.2 roční úspora = ušetřený dokup × cena elektřiny', () => {
+  it('U5.1b doporučení je podložené křivkou, kterou si uživatel může prohlédnout', () => {
+    loadYear(sample2022);
+    const rec = store().capacityRecommendation!;
+    // Křivka pokrývá celý rozsah nabízený sliderem a roste monotónně:
+    // větší baterie nikdy neušetří méně.
+    expect(rec.curve.length).toBeGreaterThan(10);
+    expect(rec.curve[0].capacity).toBe(2);
+    expect(rec.curve[rec.curve.length - 1].capacity).toBe(30);
+    for (let i = 1; i < rec.curve.length; i++) {
+      expect(rec.curve[i].savingsPerYear).toBeGreaterThanOrEqual(
+        rec.curve[i - 1].savingsPerYear - 1e-6
+      );
+    }
+    // Doporučení leží v koleni křivky: dál už další kWh přináší málo.
+    expect(rec.capacity).toBeGreaterThan(rec.curve[0].capacity);
+    expect(rec.capacity).toBeLessThan(rec.curve[rec.curve.length - 1].capacity);
+    expect(rec.benefitShare).toBeGreaterThan(0.5);
+    // Přírůstek za kolenem je výrazně menší než přírůstek před ním.
+    const step = rec.curve[1].capacity - rec.curve[0].capacity;
+    const gainBefore =
+      (rec.curve[1].savingsPerYear - rec.curve[0].savingsPerYear) / step;
+    expect(rec.marginalSavingsPerKwh).toBeLessThan(gainBefore / 2);
+  });
+
+  it('U5.2 roční úspora = ušetřený nákup minus ušlý výkup, přepočtený na rok', () => {
     loadYear(sample2022);
     const sim = store().batterySimulation!;
-    expect(sim.annualSavings).toBeCloseTo(sim.gridImportReduction * DEFAULT_BATTERY.electricityPrice, 6);
-    expect(sim.annualSavings).toBeGreaterThan(0);
+    const cfg = store().batteryConfig;
+    const scale = 365 / sim.daysSimulated;
+    const expected =
+      (sim.gridImportReduction * cfg.electricityPrice -
+        sim.gridExportReduction * cfg.feedInPrice) *
+      scale;
+    expect(sim.savingsPerYear).toBeCloseTo(expected, 6);
+    expect(sim.savingsPerYear).toBeGreaterThan(0);
+    // Rozklad musí sedět na celek.
+    expect(sim.savingsPerYear).toBeCloseTo(
+      sim.avoidedPurchasePerYear - sim.lostFeedInPerYear,
+      6
+    );
   });
 
   it('U5.3 větší baterie nikdy neušetří méně než menší', () => {
@@ -263,27 +300,58 @@ describe('U5 doporučení baterie a úspora', () => {
     const records = store().allRecords;
     const small = simulateBattery(records, { ...DEFAULT_BATTERY, capacity: 5 });
     const large = simulateBattery(records, { ...DEFAULT_BATTERY, capacity: 10 });
-    expect(large.annualSavings).toBeGreaterThanOrEqual(small.annualSavings);
+    expect(large.savingsPerYear).toBeGreaterThanOrEqual(small.savingsPerYear);
     expect(large.offGridDays).toBeGreaterThanOrEqual(small.offGridDays);
   });
 
-  // ZNÁMÁ CHYBA (M1): „roční“ úspora je součet přes všechny načtené roky.
-  it.fails('U5.4 při nahraných dvou letech je „roční úspora“ skutečně za jeden rok', () => {
+  it('U5.4 při nahraných dvou letech je „roční úspora“ skutečně za jeden rok', () => {
     loadYear(sample2022);
-    const only2022 = store().batterySimulation!.annualSavings;
+    const only2022 = store().batterySimulation!.savingsPerYear;
     store().clearData();
     loadYear(sample2025);
-    const only2025 = store().batterySimulation!.annualSavings;
+    const only2025 = store().batterySimulation!.savingsPerYear;
     store().clearData();
     loadYear(sample2022);
     loadYear(sample2025);
-    const both = store().batterySimulation!.annualSavings;
-    // Roční hodnota za dva roky nesmí být větší než nejlepší jednotlivý rok (s rezervou 5 %).
+    store().setSelectedYears([2022, 2025]);
+    const both = store().batterySimulation!.savingsPerYear;
+    // Roční hodnota za dva roky nesmí být větší než nejlepší jednotlivý rok.
     expect(both).toBeLessThanOrEqual(Math.max(only2022, only2025) * 1.05);
+    // A musí ležet mezi jednotlivými roky, protože je to jejich průměr.
+    expect(both).toBeGreaterThanOrEqual(Math.min(only2022, only2025) * 0.95);
+  });
+
+  it('U5.5 účinnost baterie snižuje úsporu, ztráty se nikam neztratí', () => {
+    loadYear(sample2022);
+    const records = store().allRecords;
+    const lossless = simulateBattery(records, {
+      ...DEFAULT_BATTERY,
+      roundTripEfficiency: 100,
+    });
+    const real = simulateBattery(records, { ...DEFAULT_BATTERY, roundTripEfficiency: 90 });
+    expect(real.totalEnergyUsedFromBattery).toBeLessThan(
+      lossless.totalEnergyUsedFromBattery
+    );
+    expect(real.savingsPerYear).toBeLessThan(lossless.savingsPerYear);
+    // Z baterie nikdy nevyjde víc, než do ní vstoupilo.
+    expect(real.totalEnergyUsedFromBattery).toBeLessThanOrEqual(
+      real.totalEnergyStored + 1e-6
+    );
+  });
+
+  it('U5.6 výkupní cena snižuje úsporu o hodnotu neprodaných přetoků', () => {
+    loadYear(sample2022);
+    const records = store().allRecords;
+    const withoutFeedIn = simulateBattery(records, { ...DEFAULT_BATTERY, feedInPrice: 0 });
+    const withFeedIn = simulateBattery(records, { ...DEFAULT_BATTERY, feedInPrice: 2 });
+    const scale = 365 / withFeedIn.daysSimulated;
+    expect(withoutFeedIn.savingsPerYear - withFeedIn.savingsPerYear).toBeCloseTo(
+      withFeedIn.gridExportReduction * 2 * scale,
+      6
+    );
   });
 });
 
-// ---------------------------------------------------------------------------
 // U6 – „Kolik dní v roce bych s baterií nedokupoval ze sítě?“
 // ---------------------------------------------------------------------------
 
@@ -313,11 +381,14 @@ describe('U6 ostrovní dny', () => {
 // ---------------------------------------------------------------------------
 
 describe('U7 co kdyby', () => {
-  it('U7.1 dvojnásobná cena elektřiny znamená dvojnásobnou úsporu', () => {
+  it('U7.1 dvojnásobná cena elektřiny zdvojnásobí ušetřený nákup', () => {
     loadYear(sample2022);
-    const base = store().batterySimulation!.annualSavings;
+    const base = store().batterySimulation!.avoidedPurchasePerYear;
     store().setBatteryConfig({ electricityPrice: 12 });
-    expect(store().batterySimulation!.annualSavings).toBeCloseTo(base * 2, 6);
+    const doubled = store().batterySimulation!;
+    expect(doubled.avoidedPurchasePerYear).toBeCloseTo(base * 2, 6);
+    // Ušlý výkup na ceně nákupu nezávisí, proto celková úspora neroste přesně dvakrát.
+    expect(doubled.lostFeedInPerYear).toBeGreaterThan(0);
   });
 
   it('U7.2 změna kapacity okamžitě přepočítá simulaci s novou konfigurací', () => {
@@ -330,9 +401,20 @@ describe('U7 co kdyby', () => {
       expect(level.avgCharge).toBeLessThanOrEqual(15 + 1e-6);
     }
   });
+
+  it('U7.3 posun slideru kapacity nepřepočítává křivku doporučení', () => {
+    loadYear(sample2022);
+    const before = store().capacityRecommendation;
+    store().setBatteryConfig({ capacity: 12 });
+    // Křivka kapacitu sama prochází, takže na ní nezávisí a nesmí se přepočítat.
+    expect(store().capacityRecommendation).toBe(before);
+
+    // Změna hloubky vybití ale výsledek křivky mění, takže se přepočítat musí.
+    store().setBatteryConfig({ maxDischargePercent: 50 });
+    expect(store().capacityRecommendation).not.toBe(before);
+  });
 });
 
-// ---------------------------------------------------------------------------
 // U8 – „Ve kterých měsících mi baterie pomůže?“
 // ---------------------------------------------------------------------------
 

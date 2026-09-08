@@ -21,7 +21,7 @@ import PowerOffIcon from '@mui/icons-material/PowerOff';
 import ReactECharts from 'echarts-for-react';
 import { useEnergyStore } from '../../store/energyStore';
 import { useSmoothWheelZoom } from '../../hooks/useSmoothWheelZoom';
-import { formatCurrency, formatEnergy } from '../../utils/batteryAlgorithm';
+import { formatCurrency, formatEnergy } from '../../utils/format';
 import { formatLocalDateKey, parseLocalDateKey } from '../../utils/dateUtils';
 import { CHART_PALETTE } from '../../theme/echartsTheme';
 import { RangeControl } from '../Common';
@@ -126,6 +126,7 @@ const SmallStat: React.FC<SmallStatProps> = ({ icon, label, value }) => (
 const BatteryAnalysis: React.FC = () => {
   const batteryConfig = useEnergyStore((s) => s.batteryConfig);
   const batterySimulation = useEnergyStore((s) => s.batterySimulation);
+  const capacityRecommendation = useEnergyStore((s) => s.capacityRecommendation);
   const setBatteryConfig = useEnergyStore((s) => s.setBatteryConfig);
   const hasData = useEnergyStore((s) => s.allRecords.length > 0);
 
@@ -144,7 +145,7 @@ const BatteryAnalysis: React.FC = () => {
   const avgCoveragePercent = useMemo(() => {
     if (!batterySimulation || batterySimulation.dailyGridImport.length === 0) return 0;
     return (
-      batterySimulation.dailyGridImport.reduce((s, d) => s + d.selfSufficiencyPercent, 0) /
+      batterySimulation.dailyGridImport.reduce((s, d) => s + d.importCoveredPercent, 0) /
       batterySimulation.dailyGridImport.length
     );
   }, [batterySimulation]);
@@ -235,7 +236,7 @@ const BatteryAnalysis: React.FC = () => {
           let html = `<strong>${date}</strong><br/>`;
           html += `<span style="color:${CHART_PALETTE.coral}">●</span> Dokup ze sítě: ${dayData.gridImport.toFixed(2)} kWh<br/>`;
           html += `<span style="color:${CHART_PALETTE.textMuted}">○</span> Původní dokup: ${dayData.gridImportOriginal.toFixed(2)} kWh<br/>`;
-          html += `<span style="color:${CHART_PALETTE.green}">●</span> Pokrytí baterií: ${dayData.selfSufficiencyPercent.toFixed(1)}%<br/>`;
+          html += `<span style="color:${CHART_PALETTE.green}">●</span> Pokrytí baterií: ${dayData.importCoveredPercent.toFixed(1)}%<br/>`;
           if (dayData.isOffGrid) {
             html += `<span style="color:${CHART_PALETTE.amber}">★ Ostrovní den</span>`;
           }
@@ -430,7 +431,7 @@ const BatteryAnalysis: React.FC = () => {
           <HeroTile
             icon={<SavingsIcon />}
             title="Roční úspora"
-            value={formatCurrency(batterySimulation?.annualSavings ?? 0)}
+            value={formatCurrency(batterySimulation?.savingsPerYear ?? 0)}
             subtitle={`Při ceně ${batteryConfig.electricityPrice.toFixed(2)} Kč/kWh`}
             color="var(--color-primary)"
           />
@@ -439,7 +440,7 @@ const BatteryAnalysis: React.FC = () => {
           <HeroTile
             icon={<BatteryChargingFullIcon />}
             title="Doporučená baterie"
-            value={`${batterySimulation?.recommendedCapacity ?? 0} kWh`}
+            value={`${capacityRecommendation?.capacity ?? 0} kWh`}
             subtitle="Podle denních přebytků a deficitů"
             color="var(--chart-2)"
           />

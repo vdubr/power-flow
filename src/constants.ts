@@ -30,13 +30,29 @@ export const DEFAULT_DAY_START = '06:00';
 export const DEFAULT_DAY_END = '20:00';
 
 /**
- * Percentile used to pick a recommended battery capacity from daily useful storage.
- */
-export const RECOMMENDED_CAPACITY_PERCENTILE = 0.8;
-
-/**
- * Bounds (kWh) and rounding step for recommended battery capacity.
+ * Bounds (kWh) and step of the capacity curve that drives the recommendation.
+ * The curve simulates every capacity in this range and reports what each one
+ * would save, so the recommendation can be explained rather than asserted.
  */
 export const RECOMMENDED_CAPACITY_MIN_KWH = 2;
 export const RECOMMENDED_CAPACITY_MAX_KWH = 30;
 export const RECOMMENDED_CAPACITY_DEFAULT_KWH = 5;
+export const CAPACITY_CURVE_STEP_KWH = 0.5;
+
+/**
+ * Days used to normalise totals to a single year. Loaded data can cover any
+ * number of days, so "per year" figures are always scaled to this length.
+ */
+export const DAYS_PER_YEAR = 365;
+
+/**
+ * Defaults for the physical parameters of a real battery.
+ *
+ * `ROUND_TRIP_EFFICIENCY` – share of the stored energy that comes back out;
+ * a typical home lithium system with its inverter lands around 90 %.
+ * `FEED_IN_PRICE` – what the surplus would have earned if it had been exported
+ * instead of stored, in CZK/kWh. Storing surplus therefore has an opportunity
+ * cost that has to be subtracted from the savings.
+ */
+export const DEFAULT_ROUND_TRIP_EFFICIENCY = 90;
+export const DEFAULT_FEED_IN_PRICE = 1.5;

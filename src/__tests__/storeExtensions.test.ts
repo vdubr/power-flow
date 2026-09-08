@@ -48,7 +48,7 @@ function seedStore(yearMap: Map<number, EnergyRecord[]>) {
       ...useEnergyStore.getState().chartConfig,
       selectedYears: availableYears,
       timeRange: null,
-      rangeMode: 'avg',
+      rangeMode: 'years',
     },
     batterySimulation: null,
   });
@@ -135,7 +135,7 @@ describe('energyStore extensions', () => {
 
   describe('setRangeMode', () => {
     it('updates chartConfig.rangeMode', () => {
-      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('avg');
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('years');
 
       useEnergyStore.getState().setRangeMode('last');
       expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('last');
@@ -143,15 +143,15 @@ describe('energyStore extensions', () => {
       useEnergyStore.getState().setRangeMode('selection');
       expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('selection');
 
-      useEnergyStore.getState().setRangeMode('avg');
-      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('avg');
+      useEnergyStore.getState().setRangeMode('years');
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('years');
     });
   });
 
   describe('setTimeRange', () => {
     it('switches rangeMode to "selection" when given a non-null range', () => {
-      // Start in 'avg' mode (default)
-      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('avg');
+      // Start in 'years' mode (default)
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('years');
 
       const range = {
         start: new Date(2024, 0, 1),
@@ -220,7 +220,7 @@ describe('energyStore extensions', () => {
 
     it('returns records for selected years in "avg" mode', () => {
       useEnergyStore.getState().setSelectedYears([2022, 2024]);
-      useEnergyStore.getState().setRangeMode('avg');
+      useEnergyStore.getState().setRangeMode('years');
 
       const active = useEnergyStore.getState().getActiveRecords();
 
@@ -231,7 +231,7 @@ describe('energyStore extensions', () => {
 
     it('returns all records in "avg" mode when selectedYears is empty', () => {
       useEnergyStore.getState().setSelectedYears([]);
-      useEnergyStore.getState().setRangeMode('avg');
+      useEnergyStore.getState().setRangeMode('years');
 
       const active = useEnergyStore.getState().getActiveRecords();
       expect(active).toHaveLength(6);

@@ -64,7 +64,7 @@ function seedStore(yearMap: Map<number, EnergyRecord[]>, selectedYears?: number[
       ...useEnergyStore.getState().chartConfig,
       selectedYears: selectedYears ?? availableYears,
       timeRange: null,
-      rangeMode: 'avg',
+      rangeMode: 'years',
     },
     batterySimulation: null,
   });
@@ -124,7 +124,7 @@ describe('StatisticsPanel', () => {
     });
 
     it('displays the correct total consumption value next to the "Celková spotřeba" label', () => {
-      // Two records: consumption 10 + 5 = 15 kWh. formatEnergy(15) → "15.0 kWh".
+      // Two records: consumption 10 + 5 = 15 kWh. formatEnergy(15) → „15,0 kWh“.
       // Note: the same formatted value might appear elsewhere (e.g. day/night breakdown),
       // so we locate it by finding the card whose title is "Celková spotřeba".
       seedStore(
@@ -144,7 +144,7 @@ describe('StatisticsPanel', () => {
       const label = screen.getByText('Celková spotřeba');
       const card = label.closest('.MuiCardContent-root');
       expect(card).not.toBeNull();
-      expect(card).toHaveTextContent('15.0 kWh');
+      expect(card).toHaveTextContent('15,0 kWh');
     });
 
     it('displays the correct total production value next to the "Celková výroba" label', () => {
@@ -158,7 +158,7 @@ describe('StatisticsPanel', () => {
       const label = screen.getByText('Celková výroba');
       const card = label.closest('.MuiCardContent-root');
       expect(card).not.toBeNull();
-      expect(card).toHaveTextContent('8.0 kWh');
+      expect(card).toHaveTextContent('8,0 kWh');
     });
 
     it('shows self-sufficiency KPI label', () => {
@@ -195,7 +195,7 @@ describe('StatisticsPanel', () => {
       const label = screen.getByText('Celková spotřeba');
       const card = label.closest('.MuiCardContent-root');
       expect(card).not.toBeNull();
-      expect(card).toHaveTextContent('2.0 MWh');
+      expect(card).toHaveTextContent('2,0 MWh');
     });
 
     it('renders the "Dny s nejvyšší spotřebou" section when data is present', () => {

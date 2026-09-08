@@ -57,7 +57,7 @@ function seedStore(records: EnergyRecord[] = [makeRecord(2023, 6, 1, 5, 2)]) {
       showConsumption: true,
       showProduction: true,
       timeRange: null,
-      rangeMode: 'avg',
+      rangeMode: 'years',
     },
     batterySimulation: null,
   });

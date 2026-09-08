@@ -15,7 +15,7 @@ import SolarPowerIcon from '@mui/icons-material/SolarPower';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import NightlightIcon from '@mui/icons-material/Nightlight';
 import { useEnergyStore } from '../../store/energyStore';
-import { formatEnergy } from '../../utils/batteryAlgorithm';
+import { formatEnergy } from '../../utils/format';
 import { aggregateByDayNight } from '../../utils/dataAggregation';
 import { getDefaultLocation } from '../../utils/sunCalculations';
 import { RangeControl } from '../Common';
@@ -162,7 +162,7 @@ const StatisticsPanel: React.FC = () => {
 
   const rangeSubtitle = useMemo(() => {
     switch (rangeMode) {
-      case 'avg':
+      case 'years':
         return 'Ø všech let';
       case 'last': {
         const targetYear = selectedYears.length > 0

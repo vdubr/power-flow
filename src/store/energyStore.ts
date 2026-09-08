@@ -11,8 +11,14 @@ import {
   RawDataPoint,
   RangeMode,
 } from '../types/energy';
-import { simulateBattery } from '../utils/batteryAlgorithm';
-import { DEFAULT_DAY_START, DEFAULT_DAY_END } from '../constants';
+import { CapacityRecommendation } from '../types/energy';
+import { simulateBattery, recommendCapacity } from '../utils/batteryAlgorithm';
+import {
+  DEFAULT_DAY_START,
+  DEFAULT_DAY_END,
+  DEFAULT_ROUND_TRIP_EFFICIENCY,
+  DEFAULT_FEED_IN_PRICE,
+} from '../constants';
 import { mergeAndGroupByYear, calculateYearStatistics, computeHasFlags } from '../utils/energyData';
 import { filterByTimeRange } from '../utils/dataAggregation';
 
@@ -27,7 +33,12 @@ interface EnergyStore {
 
   // Battery configuration & results
   batteryConfig: BatteryConfig;
+  /** Simulation over the active range, kept in sync with chartConfig. */
   batterySimulation: BatterySimulationResult | null;
+  /** Which capacity to buy, plus the curve that justifies it. */
+  capacityRecommendation: CapacityRecommendation | null;
+  /** Identity of the inputs the curve was built from; internal memoisation. */
+  capacityCurveKey: string;
 
   // Actions
   addData: (consumptionData: RawDataPoint[], productionData: RawDataPoint[]) => void;
@@ -63,7 +74,7 @@ const createDefaultChartConfig = (): ChartConfig => ({
     manualDayStart: DEFAULT_DAY_START,
     manualDayEnd: DEFAULT_DAY_END,
   },
-  rangeMode: 'avg',
+  rangeMode: 'years',
   showSunOverlay: false,
 });
 
@@ -72,7 +83,112 @@ const createDefaultBatteryConfig = (): BatteryConfig => ({
   maxDischargePercent: 80,
   minReserve: 1,
   electricityPrice: 6,
+  roundTripEfficiency: DEFAULT_ROUND_TRIP_EFFICIENCY,
+  feedInPrice: DEFAULT_FEED_IN_PRICE,
 });
+
+/**
+ * The subset of the data every panel works with.
+ *
+ * Kept as a free function so the chart, the statistics and the battery
+ * simulation all derive from exactly the same rule. Before this existed the
+ * three panels read three different slices and could disagree after a brush
+ * selection.
+ */
+/**
+ * Everything derived from the data plus the current settings.
+ *
+ * Recomputed by `recompute()` whenever the active range or the battery
+ * configuration changes, so no panel can drift out of sync with another.
+ */
+interface DerivedState {
+  batterySimulation: BatterySimulationResult | null;
+  capacityRecommendation: CapacityRecommendation | null;
+  capacityCurveKey: string;
+}
+
+/**
+ * Identity of the inputs the capacity curve depends on.
+ *
+ * The curve sweeps capacity, so `config.capacity` deliberately does not appear
+ * here: dragging the capacity slider must not trigger a 57-run recomputation.
+ */
+function capacityCurveKeyOf(active: EnergyRecord[], config: BatteryConfig): string {
+  const first = active.length > 0 ? active[0].timestamp.getTime() : 0;
+  const last = active.length > 0 ? active[active.length - 1].timestamp.getTime() : 0;
+  return [
+    active.length,
+    first,
+    last,
+    config.maxDischargePercent,
+    config.minReserve,
+    config.electricityPrice,
+    config.roundTripEfficiency,
+    config.feedInPrice,
+  ].join('|');
+}
+
+function recompute(
+  allRecords: EnergyRecord[],
+  availableYears: number[],
+  chartConfig: ChartConfig,
+  batteryConfig: BatteryConfig,
+  previous: { capacityCurveKey: string; capacityRecommendation: CapacityRecommendation | null }
+): DerivedState {
+  const active = selectActiveRecords(allRecords, availableYears, chartConfig);
+
+  if (active.length === 0) {
+    return { batterySimulation: null, capacityRecommendation: null, capacityCurveKey: '' };
+  }
+
+  let batterySimulation: BatterySimulationResult | null = null;
+  try {
+    batterySimulation = simulateBattery(active, batteryConfig);
+  } catch (error) {
+    console.error('Battery simulation error:', error);
+  }
+
+  const key = capacityCurveKeyOf(active, batteryConfig);
+  let capacityRecommendation = previous.capacityRecommendation;
+  if (key !== previous.capacityCurveKey || capacityRecommendation === null) {
+    try {
+      capacityRecommendation = recommendCapacity(active, batteryConfig);
+    } catch (error) {
+      console.error('Capacity recommendation error:', error);
+      capacityRecommendation = null;
+    }
+  }
+
+  return { batterySimulation, capacityRecommendation, capacityCurveKey: key };
+}
+
+function selectActiveRecords(
+  allRecords: EnergyRecord[],
+  availableYears: number[],
+  chartConfig: ChartConfig
+): EnergyRecord[] {
+  const { rangeMode, selectedYears, timeRange } = chartConfig;
+
+  switch (rangeMode) {
+    case 'years': {
+      if (selectedYears.length === 0) return allRecords;
+      const yearSet = new Set(selectedYears);
+      return allRecords.filter((r) => yearSet.has(r.timestamp.getFullYear()));
+    }
+    case 'last': {
+      const pool = selectedYears.length > 0 ? selectedYears : availableYears;
+      if (pool.length === 0) return allRecords;
+      const targetYear = Math.max(...pool);
+      return allRecords.filter((r) => r.timestamp.getFullYear() === targetYear);
+    }
+    case 'selection': {
+      if (!timeRange) return allRecords;
+      return filterByTimeRange(allRecords, timeRange.start, timeRange.end);
+    }
+    default:
+      return allRecords;
+  }
+}
 
 export const useEnergyStore = create<EnergyStore>((set, get) => ({
   // Initial state
@@ -82,6 +198,8 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
   chartConfig: createDefaultChartConfig(),
   batteryConfig: createDefaultBatteryConfig(),
   batterySimulation: null,
+  capacityRecommendation: null,
+  capacityCurveKey: '',
 
   // Actions
   addData: (consumptionData: RawDataPoint[], productionData: RawDataPoint[]) => {
@@ -154,16 +272,7 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     // Sort all records
     allRecords.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-    // Run battery simulation automatically with new data
     const { batteryConfig, chartConfig: currentChartConfig } = get();
-    let batterySimulation: BatterySimulationResult | null = null;
-    if (allRecords.length > 0) {
-      try {
-        batterySimulation = simulateBattery(allRecords, batteryConfig);
-      } catch (error) {
-        console.error('Battery simulation error:', error);
-      }
-    }
 
     // Preserve user's selected years that are still available; if none were selected
     // (first load), default to the year with the most records (most complete year).
@@ -189,15 +298,17 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
         ? [defaultYear]
         : [];
 
+    const chartConfig: ChartConfig = {
+      ...currentChartConfig,
+      selectedYears: newSelectedYears,
+    };
+
     set({
       yearlyData: newYearlyData,
       allRecords,
       availableYears,
-      chartConfig: {
-        ...currentChartConfig,
-        selectedYears: newSelectedYears,
-      },
-      batterySimulation,
+      chartConfig,
+      ...recompute(allRecords, availableYears, chartConfig, batteryConfig, get()),
     });
   },
 
@@ -214,6 +325,8 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       chartConfig: createDefaultChartConfig(),
       batteryConfig: createDefaultBatteryConfig(),
       batterySimulation: null,
+      capacityRecommendation: null,
+      capacityCurveKey: '',
     });
   },
 
@@ -226,24 +339,44 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     });
   },
 
+  /** Changes the active range, so everything derived is recomputed. */
   setSelectedYears: (years: number[]) => {
+    const state = get();
+    const chartConfig: ChartConfig = { ...state.chartConfig, selectedYears: years };
     set({
-      chartConfig: {
-        ...get().chartConfig,
-        selectedYears: years,
-      },
+      chartConfig,
+      ...recompute(
+        state.allRecords,
+        state.availableYears,
+        chartConfig,
+        state.batteryConfig,
+        state
+      ),
     });
   },
 
   setTimeRange: (range: TimeRange | null) => {
-    const current = get().chartConfig;
+    const state = get();
+    const chartConfig: ChartConfig = {
+      ...state.chartConfig,
+      timeRange: range,
+      // Brushing a range in the chart switches every panel to that range.
+      // Clearing it returns to whichever mode was active before.
+      rangeMode: range
+        ? 'selection'
+        : state.chartConfig.rangeMode === 'selection'
+          ? 'years'
+          : state.chartConfig.rangeMode,
+    };
     set({
-      chartConfig: {
-        ...current,
-        timeRange: range,
-        // If user actively selects a range, switch to selection mode automatically
-        rangeMode: range ? 'selection' : current.rangeMode,
-      },
+      chartConfig,
+      ...recompute(
+        state.allRecords,
+        state.availableYears,
+        chartConfig,
+        state.batteryConfig,
+        state
+      ),
     });
   },
 
@@ -275,24 +408,18 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
   },
 
   setBatteryConfig: (config: Partial<BatteryConfig>) => {
-    const newConfig = {
-      ...get().batteryConfig,
-      ...config,
-    };
-
-    // Automatically run simulation when config changes
-    const { allRecords } = get();
-    if (allRecords.length > 0) {
-      try {
-        const result = simulateBattery(allRecords, newConfig);
-        set({ batteryConfig: newConfig, batterySimulation: result });
-      } catch (error) {
-        console.error('Battery simulation error:', error);
-        set({ batteryConfig: newConfig, batterySimulation: null });
-      }
-    } else {
-      set({ batteryConfig: newConfig });
-    }
+    const state = get();
+    const batteryConfig: BatteryConfig = { ...state.batteryConfig, ...config };
+    set({
+      batteryConfig,
+      ...recompute(
+        state.allRecords,
+        state.availableYears,
+        state.chartConfig,
+        batteryConfig,
+        state
+      ),
+    });
   },
 
   removeYear: (year: number) => {
@@ -325,39 +452,37 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     const newTimeRange = selectionStillValid ? chartConfig.timeRange : null;
     const newRangeMode =
       chartConfig.rangeMode === 'selection' && !selectionStillValid
-        ? 'avg'
+        ? 'years'
         : chartConfig.rangeMode;
 
-    // Rerun battery simulation with remaining records
-    let batterySimulation: BatterySimulationResult | null = null;
-    if (newAllRecords.length > 0) {
-      try {
-        batterySimulation = simulateBattery(newAllRecords, batteryConfig);
-      } catch (error) {
-        console.error('Battery simulation error:', error);
-      }
-    }
+    const newChartConfig: ChartConfig = {
+      ...chartConfig,
+      selectedYears: newSelectedYears,
+      timeRange: newTimeRange,
+      rangeMode: newRangeMode,
+    };
 
     set({
       yearlyData: newYearlyData,
       allRecords: newAllRecords,
       availableYears: newAvailableYears,
-      chartConfig: {
-        ...chartConfig,
-        selectedYears: newSelectedYears,
-        timeRange: newTimeRange,
-        rangeMode: newRangeMode,
-      },
-      batterySimulation,
+      chartConfig: newChartConfig,
+      ...recompute(newAllRecords, newAvailableYears, newChartConfig, batteryConfig, get()),
     });
   },
 
   setRangeMode: (mode: RangeMode) => {
+    const state = get();
+    const chartConfig: ChartConfig = { ...state.chartConfig, rangeMode: mode };
     set({
-      chartConfig: {
-        ...get().chartConfig,
-        rangeMode: mode,
-      },
+      chartConfig,
+      ...recompute(
+        state.allRecords,
+        state.availableYears,
+        chartConfig,
+        state.batteryConfig,
+        state
+      ),
     });
   },
 
@@ -372,30 +497,6 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
 
   getActiveRecords: (): EnergyRecord[] => {
     const { allRecords, availableYears, chartConfig } = get();
-    const { rangeMode, selectedYears, timeRange } = chartConfig;
-
-    switch (rangeMode) {
-      case 'avg': {
-        if (selectedYears.length === 0) return allRecords;
-        const yearSet = new Set(selectedYears);
-        return allRecords.filter(r => yearSet.has(r.timestamp.getFullYear()));
-      }
-      case 'last': {
-        let targetYear: number | null = null;
-        if (selectedYears.length > 0) {
-          targetYear = Math.max(...selectedYears);
-        } else if (availableYears.length > 0) {
-          targetYear = Math.max(...availableYears);
-        }
-        if (targetYear === null) return allRecords;
-        return allRecords.filter(r => r.timestamp.getFullYear() === targetYear);
-      }
-      case 'selection': {
-        if (!timeRange) return allRecords;
-        return filterByTimeRange(allRecords, timeRange.start, timeRange.end);
-      }
-      default:
-        return allRecords;
-    }
+    return selectActiveRecords(allRecords, availableYears, chartConfig);
   },
 }));

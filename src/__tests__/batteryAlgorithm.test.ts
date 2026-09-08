@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   simulateBattery,
-  calculateRecommendedCapacity,
-  formatCurrency,
-  formatEnergy,
+  recommendCapacity,
+  buildCapacityCurve,
+  chargeWindow,
 } from '../utils/batteryAlgorithm';
+import { formatCurrency, formatEnergy } from '../utils/format';
 import { EnergyRecord, BatteryConfig } from '../types/energy';
 
 // Helper to create test records
@@ -31,6 +32,10 @@ describe('batteryAlgorithm', () => {
     maxDischargePercent: 80,
     minReserve: 1,
     electricityPrice: 6,
+    // A lossless battery with no feed-in tariff keeps the existing arithmetic
+    // checks readable; dedicated tests below cover efficiency and feed-in.
+    roundTripEfficiency: 100,
+    feedInPrice: 0,
   };
 
   describe('simulateBattery', () => {
@@ -89,14 +94,14 @@ describe('batteryAlgorithm', () => {
       const result = simulateBattery(records, defaultConfig);
 
       // Savings = energy used from battery * price
-      expect(result.annualSavings).toBeGreaterThan(0);
+      expect(result.savingsPerYear).toBeGreaterThan(0);
     });
 
     it('handles empty records', () => {
       const result = simulateBattery([], defaultConfig);
 
       expect(result.totalEnergyStored).toBe(0);
-      expect(result.annualSavings).toBe(0);
+      expect(result.savingsPerYear).toBe(0);
       expect(result.dailyAverageLevels).toHaveLength(0);
     });
 
@@ -149,8 +154,8 @@ describe('batteryAlgorithm', () => {
       // Battery covered most of it → effective import smaller
       expect(d.gridImport).toBeLessThan(d.gridImportOriginal);
       // Self-sufficiency in this context = how much of import was covered
-      expect(d.selfSufficiencyPercent).toBeGreaterThan(0);
-      expect(d.selfSufficiencyPercent).toBeLessThanOrEqual(100);
+      expect(d.importCoveredPercent).toBeGreaterThan(0);
+      expect(d.importCoveredPercent).toBeLessThanOrEqual(100);
     });
 
     it('marks a day as off-grid when battery-adjusted import is below threshold', () => {
@@ -186,19 +191,26 @@ describe('batteryAlgorithm', () => {
       expect(result.gridExportReduction).toBeGreaterThan(0);
       // Battery covered some of the deficit → less imported
       expect(result.gridImportReduction).toBeGreaterThan(0);
-      // Savings = import reduction * price
-      expect(result.annualSavings).toBeCloseTo(result.gridImportReduction * defaultConfig.electricityPrice);
+      // Savings over the period = import reduction * price (feedInPrice is 0 here);
+      // savingsPerYear scales that to a full year, and this fixture covers one day.
+      expect(result.totalSavings).toBeCloseTo(
+        result.gridImportReduction * defaultConfig.electricityPrice
+      );
+      expect(result.daysSimulated).toBe(1);
+      expect(result.savingsPerYear).toBeCloseTo(result.totalSavings * 365);
     });
 
-    it('computes averageDailyChargeCycles based on capacity and unique days', () => {
-      // Two days, each with a 4 kWh surplus stored → totalStored = 8
-      // capacity = 10 → cycles = 8 / 10 = 0.8 cycles total over 2 days = 0.4/day
+    it('counts charge cycles against the usable energy, not the nameplate capacity', () => {
+      // Two days, each storing 4 kWh → 8 kWh stored in total.
+      // At 80 % depth of discharge and a 1 kWh reserve the floor is 2 kWh, so a
+      // full cycle is 8 kWh, not 10: 8 / 8 = 1 cycle over two days = 0.5/day.
       const records: EnergyRecord[] = [
         createRecord('01.06.2022 12:00', 0, 4),
         createRecord('02.06.2022 12:00', 0, 4),
       ];
       const result = simulateBattery(records, defaultConfig);
-      expect(result.averageDailyChargeCycles).toBeCloseTo(0.4, 2);
+      expect(chargeWindow(defaultConfig).usableEnergy).toBeCloseTo(8);
+      expect(result.averageDailyChargeCycles).toBeCloseTo(0.5, 2);
     });
 
     it('does not charge beyond capacity', () => {
@@ -249,7 +261,7 @@ describe('batteryAlgorithm', () => {
 
       // None of the scalar numeric fields should be NaN or Infinity
       const scalars = [
-        result!.annualSavings,
+        result!.savingsPerYear,
         result!.totalEnergyStored,
         result!.totalEnergyUsedFromBattery,
         result!.gridExportReduction,
@@ -257,7 +269,10 @@ describe('batteryAlgorithm', () => {
         result!.averageDailyChargeCycles,
         result!.offGridDays,
         result!.offGridDaysPercent,
-        result!.recommendedCapacity,
+        result!.baselineOffGridDays,
+        result!.offGridDaysGained,
+        result!.importCoveragePercent,
+        result!.daysSimulated,
       ];
       for (const v of scalars) {
         expect(Number.isFinite(v)).toBe(true);
@@ -355,15 +370,37 @@ describe('batteryAlgorithm', () => {
         records.push(createRecord(`0${day}.01.2022 20:00`, 1.5, 0));
       }
 
-      const capacity = calculateRecommendedCapacity(records);
+      const recommendation = recommendCapacity(records, defaultConfig);
 
-      expect(capacity).toBeGreaterThan(0);
-      expect(capacity).toBeLessThanOrEqual(30);
+      expect(recommendation.capacity).toBeGreaterThan(0);
+      expect(recommendation.capacity).toBeLessThanOrEqual(30);
+      // The recommendation must be backed by a curve the user can inspect.
+      expect(recommendation.curve.length).toBeGreaterThan(1);
+      expect(recommendation.benefitShare).toBeGreaterThan(0);
+      expect(recommendation.benefitShare).toBeLessThanOrEqual(1);
     });
 
     it('returns default for empty records', () => {
-      const capacity = calculateRecommendedCapacity([]);
-      expect(capacity).toBe(5); // Default value
+      const recommendation = recommendCapacity([], defaultConfig);
+      expect(recommendation.capacity).toBe(5); // Default value
+      expect(recommendation.curve).toEqual([]);
+    });
+
+    it('buildCapacityCurve honours the requested range and step', () => {
+      const records: EnergyRecord[] = [
+        createRecord('01.06.2022 12:00', 0, 6),
+        createRecord('01.06.2022 20:00', 6, 0),
+      ];
+      const curve = buildCapacityCurve(records, defaultConfig, {
+        minKwh: 2,
+        maxKwh: 5,
+        stepKwh: 1,
+      });
+      expect(curve.map((p) => p.capacity)).toEqual([2, 3, 4, 5]);
+      // A bigger battery cannot save less than a smaller one.
+      for (let i = 1; i < curve.length; i++) {
+        expect(curve[i].savingsPerYear).toBeGreaterThanOrEqual(curve[i - 1].savingsPerYear);
+      }
     });
   });
 
@@ -383,17 +420,17 @@ describe('batteryAlgorithm', () => {
 
   describe('formatEnergy', () => {
     it('formats small values in kWh', () => {
-      expect(formatEnergy(123)).toBe('123.0 kWh');
-      expect(formatEnergy(0.5)).toBe('0.5 kWh');
+      expect(formatEnergy(123)).toBe('123,0 kWh');
+      expect(formatEnergy(0.5)).toBe('0,5 kWh');
     });
 
     it('formats large values in MWh', () => {
-      expect(formatEnergy(1500)).toBe('1.5 MWh');
-      expect(formatEnergy(2345.6)).toBe('2.3 MWh');
+      expect(formatEnergy(1500)).toBe('1,5 MWh');
+      expect(formatEnergy(2345.6)).toBe('2,3 MWh');
     });
 
     it('respects decimal places parameter', () => {
-      expect(formatEnergy(123.456, 2)).toBe('123.46 kWh');
+      expect(formatEnergy(123.456, 2)).toBe('123,46 kWh');
       expect(formatEnergy(1234.5, 0)).toBe('1 MWh');
     });
   });
