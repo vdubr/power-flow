@@ -12,6 +12,7 @@ import {
   RangeMode,
 } from '../types/energy';
 import { simulateBattery } from '../utils/batteryAlgorithm';
+import { DEFAULT_DAY_START, DEFAULT_DAY_END } from '../constants';
 import { mergeAndGroupByYear, calculateYearStatistics, computeHasFlags } from '../utils/energyData';
 import { filterByTimeRange } from '../utils/dataAggregation';
 
@@ -46,7 +47,12 @@ interface EnergyStore {
   getActiveRecords: () => EnergyRecord[];
 }
 
-const DEFAULT_CHART_CONFIG: ChartConfig = {
+/**
+ * Factories, not shared constants: the store holds these objects directly, so
+ * a single accidental mutation of a shared literal would leak into every later
+ * reset and across tests in the same process.
+ */
+const createDefaultChartConfig = (): ChartConfig => ({
   aggregationType: 'daily',
   selectedYears: [],
   timeRange: null,
@@ -54,32 +60,38 @@ const DEFAULT_CHART_CONFIG: ChartConfig = {
   showProduction: true,
   dayNightConfig: {
     mode: 'manual',
-    manualDayStart: '06:00',
-    manualDayEnd: '20:00',
+    manualDayStart: DEFAULT_DAY_START,
+    manualDayEnd: DEFAULT_DAY_END,
   },
   rangeMode: 'avg',
   showSunOverlay: false,
-};
+});
 
-const DEFAULT_BATTERY_CONFIG: BatteryConfig = {
+const createDefaultBatteryConfig = (): BatteryConfig => ({
   capacity: 10,
   maxDischargePercent: 80,
   minReserve: 1,
   electricityPrice: 6,
-};
+});
 
 export const useEnergyStore = create<EnergyStore>((set, get) => ({
   // Initial state
   yearlyData: new Map(),
   allRecords: [],
   availableYears: [],
-  chartConfig: DEFAULT_CHART_CONFIG,
-  batteryConfig: DEFAULT_BATTERY_CONFIG,
+  chartConfig: createDefaultChartConfig(),
+  batteryConfig: createDefaultBatteryConfig(),
   batterySimulation: null,
 
   // Actions
   addData: (consumptionData: RawDataPoint[], productionData: RawDataPoint[]) => {
     const yearMap = mergeAndGroupByYear(consumptionData, productionData);
+
+    // Which side did this batch actually carry? A batch with only the
+    // consumption file must not blank out production already in the store
+    // (and vice versa), while re-importing the same file must not double it.
+    const batchHasConsumption = consumptionData.length > 0;
+    const batchHasProduction = productionData.length > 0;
 
     const newYearlyData = new Map<number, YearlyData>();
     const allRecords: EnergyRecord[] = [];
@@ -87,15 +99,33 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     for (const [year, records] of yearMap) {
       const existingYearData = get().yearlyData.get(year);
 
-      // Merge with existing data if present
-      const mergedRecords = existingYearData
-        ? [...existingYearData.records, ...records]
-        : records;
+      let mergedRecords: EnergyRecord[];
 
-      // Remove duplicates based on timestamp
-      const uniqueRecords = Array.from(
-        new Map(mergedRecords.map(r => [r.timestamp.getTime(), r])).values()
-      ).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      if (existingYearData) {
+        // Start from what is already stored, then overlay the incoming batch
+        // field by field: a field is only replaced when the batch carries it.
+        const byTimestamp = new Map<number, EnergyRecord>();
+        for (const record of existingYearData.records) {
+          byTimestamp.set(record.timestamp.getTime(), { ...record });
+        }
+        for (const record of records) {
+          const key = record.timestamp.getTime();
+          const existing = byTimestamp.get(key);
+          if (existing) {
+            if (batchHasConsumption) existing.consumption = record.consumption;
+            if (batchHasProduction) existing.production = record.production;
+          } else {
+            byTimestamp.set(key, { ...record });
+          }
+        }
+        mergedRecords = Array.from(byTimestamp.values());
+      } else {
+        mergedRecords = records;
+      }
+
+      const uniqueRecords = mergedRecords.sort(
+        (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+      );
 
       const statistics = calculateYearStatistics(uniqueRecords, year);
       const { hasProduction, hasConsumption } = computeHasFlags(uniqueRecords);
@@ -108,18 +138,18 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
         hasConsumption,
       });
 
-      allRecords.push(...uniqueRecords);
+      for (const record of uniqueRecords) allRecords.push(record);
     }
 
-    // Merge with existing years that weren't updated (already have hasProduction/hasConsumption)
+    // Keep years that this batch did not touch.
     for (const [year, data] of get().yearlyData) {
       if (!newYearlyData.has(year)) {
         newYearlyData.set(year, data);
-        allRecords.push(...data.records);
+        for (const record of data.records) allRecords.push(record);
       }
     }
 
-    const availableYears = Array.from(newYearlyData.keys()).sort();
+    const availableYears = Array.from(newYearlyData.keys()).sort((a, b) => a - b);
 
     // Sort all records
     allRecords.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -171,12 +201,18 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     });
   },
 
+  /**
+   * "Vymazat všechna data" – returns the app to its first-run state.
+   * The battery configuration is reset too, so the next import is not silently
+   * evaluated against sliders left over from the previous dataset.
+   */
   clearData: () => {
     set({
       yearlyData: new Map(),
       allRecords: [],
       availableYears: [],
-      chartConfig: DEFAULT_CHART_CONFIG,
+      chartConfig: createDefaultChartConfig(),
+      batteryConfig: createDefaultBatteryConfig(),
       batterySimulation: null,
     });
   },
@@ -272,10 +308,25 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     );
 
     // Recompute availableYears from yearlyData keys (sorted)
-    const newAvailableYears = Array.from(newYearlyData.keys()).sort();
+    const newAvailableYears = Array.from(newYearlyData.keys()).sort((a, b) => a - b);
 
     // Remove year from selectedYears
     const newSelectedYears = chartConfig.selectedYears.filter(y => y !== year);
+
+    // Drop a chart selection that pointed into the removed year, otherwise the
+    // statistics panel would silently show an empty range.
+    const selectionStillValid =
+      chartConfig.timeRange !== null &&
+      newAllRecords.some(
+        r =>
+          r.timestamp >= chartConfig.timeRange!.start &&
+          r.timestamp <= chartConfig.timeRange!.end
+      );
+    const newTimeRange = selectionStillValid ? chartConfig.timeRange : null;
+    const newRangeMode =
+      chartConfig.rangeMode === 'selection' && !selectionStillValid
+        ? 'avg'
+        : chartConfig.rangeMode;
 
     // Rerun battery simulation with remaining records
     let batterySimulation: BatterySimulationResult | null = null;
@@ -294,6 +345,8 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       chartConfig: {
         ...chartConfig,
         selectedYears: newSelectedYears,
+        timeRange: newTimeRange,
+        rangeMode: newRangeMode,
       },
       batterySimulation,
     });

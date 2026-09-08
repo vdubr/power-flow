@@ -97,7 +97,11 @@ export function mergeAndGroupByYear(
     const energyKwh = point.value / INTERVALS_PER_HOUR;
     const existing = recordMap.get(key);
     if (existing) {
-      existing[field] = energyKwh;
+      // Two readings can share a timestamp on the autumn DST night, when local
+      // time 02:00–02:45 occurs twice and JavaScript maps both to the same
+      // instant. Summing keeps the year's total energy correct; overwriting
+      // used to silently discard four intervals every year.
+      existing[field] += energyKwh;
     } else {
       recordMap.set(key, {
         timestamp: point.timestamp,

@@ -226,6 +226,7 @@ describe('FileUploader', () => {
     },
     errors: [],
     recordCount: 1,
+    quality: { totalRows: 1, validRows: 1, invalidStatusRows: 0, rejectedRows: 0 },
   });
 
   // Helper: make a failed CSVParseResult.
@@ -238,6 +239,7 @@ describe('FileUploader', () => {
     dateRange: null,
     errors: [errorMsg],
     recordCount: 0,
+    quality: { totalRows: 0, validRows: 0, invalidStatusRows: 0, rejectedRows: 0 },
   });
 
   // Helper: dispatch a `change` event on the hidden <input type="file" /> with a

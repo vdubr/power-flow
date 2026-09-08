@@ -100,15 +100,15 @@ describe('U1 roční bilance vůči síti', () => {
     expect(sample2022.production.recordCount).toBe(35040);
   });
 
-  // ZNÁMÁ CHYBA (D4): poslední řádek „01.01.2023 00:00“ vytvoří fantomový rok 2023.
-  it.fails('U1.1 po nahrání exportu za jeden rok vidí uživatel přesně jeden rok', () => {
+  // Regrese k D4: dřív poslední řádek „01.01.2023 00:00“ vytvořil fantomový rok 2023.
+  it('U1.1 po nahrání exportu za jeden rok vidí uživatel přesně jeden rok', () => {
     loadYear(sample2022);
     expect(store().availableYears).toEqual([2022]);
     expect(store().chartConfig.selectedYears).toEqual([2022]);
   });
 
-  // ZNÁMÁ CHYBA (D3, D4): ztráta duplicitní DST hodiny a posun posledního intervalu do 2023.
-  it.fails('U1.2 celkový odběr a dodávka za rok odpovídají součtu CSV (kW × 0,25)', () => {
+  // Regrese k D3 a D4: dřív se ztrácela duplicitní hodina zimního času a poslední interval roku.
+  it('U1.2 celkový odběr a dodávka za rok odpovídají součtu CSV (kW × 0,25)', () => {
     loadYear(sample2022);
     const stats = store().yearlyData.get(2022)!.statistics;
     expect(stats.totalConsumption).toBeCloseTo(rawKwhSum(2022, 'spotreba'), 2);
@@ -201,8 +201,8 @@ describe('U3 porovnání let', () => {
     expect(s2022.totalConsumption).not.toBeCloseTo(s2025.totalConsumption, 0);
   });
 
-  // ZNÁMÁ CHYBA (D1): řádky „DD.MM.YYYY 24:00:00“ jsou odmítnuty (365 řádků/rok).
-  it.fails('U3.3 export ve formátu „+A/… [kW]“ (2025) se načte beze ztráty řádků', () => {
+  // Regrese k D1: dřív byly řádky „DD.MM.YYYY 24:00:00“ odmítnuty (365 řádků ročně).
+  it('U3.3 export ve formátu „+A/… [kW]“ (2025) se načte beze ztráty řádků', () => {
     expect(sample2025.consumption.errors).toEqual([]);
     expect(sample2025.consumption.recordCount).toBe(35040);
   });
@@ -337,8 +337,8 @@ describe('U7 co kdyby', () => {
 // ---------------------------------------------------------------------------
 
 describe('U8 sezónnost', () => {
-  // ZNÁMÁ CHYBA (D4): fantomový „Leden 2023“ přidá 13. měsíc.
-  it.fails('U8.1 měsíční analýza jednoho roku má přesně 12 měsíců', () => {
+  // Regrese k D4: dřív fantomový „Leden 2023“ přidal 13. měsíc.
+  it('U8.1 měsíční analýza jednoho roku má přesně 12 měsíců', () => {
     loadYear(sample2022);
     const months = store().batterySimulation!.monthlyAnalysis;
     expect(months).toHaveLength(12);

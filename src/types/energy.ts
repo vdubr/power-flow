@@ -144,6 +144,18 @@ export interface TimeRange {
 }
 
 // CSV parsing types
+
+/**
+ * How much of the file could actually be used. Reported to the user so they
+ * know how much to trust the numbers derived from it.
+ */
+export interface DataQuality {
+  totalRows: number; // data rows seen in the file (excluding the header)
+  validRows: number; // rows turned into measurements
+  invalidStatusRows: number; // rows whose Status column says the reading is invalid/unknown
+  rejectedRows: number; // rows dropped because the date or value could not be parsed
+}
+
 export interface CSVParseResult {
   success: boolean;
   data: RawDataPoint[];
@@ -151,6 +163,7 @@ export interface CSVParseResult {
   dateRange: TimeRange | null;
   errors: string[];
   recordCount: number;
+  quality: DataQuality;
 }
 
 // Chart configuration

@@ -5,6 +5,7 @@ import {
   detectDataType,
   parseCSV,
   decodeWindows1250,
+  intervalStart,
 } from '../utils/csvParser';
 
 const bytes = (...vals: number[]): ArrayBuffer => new Uint8Array(vals).buffer;
@@ -79,6 +80,62 @@ describe('csvParser', () => {
     });
   });
 
+  describe('parseDate – end-of-day 24:00', () => {
+    it('normalises 24:00 to midnight of the following day', () => {
+      const result = parseDate('31.12.2025 24:00:00');
+      expect(result).toBeInstanceOf(Date);
+      expect(result!.getFullYear()).toBe(2026);
+      expect(result!.getMonth()).toBe(0);
+      expect(result!.getDate()).toBe(1);
+      expect(result!.getHours()).toBe(0);
+      expect(result!.getMinutes()).toBe(0);
+    });
+
+    it('accepts 24:00 without seconds', () => {
+      const result = parseDate('15.06.2023 24:00');
+      expect(result!.getDate()).toBe(16);
+      expect(result!.getHours()).toBe(0);
+    });
+
+    it('rejects 24:xx with a non-zero minute or second', () => {
+      expect(parseDate('15.06.2023 24:15')).toBeNull();
+      expect(parseDate('15.06.2023 24:00:01')).toBeNull();
+    });
+
+    it('still rejects hour 25 and impossible source days', () => {
+      expect(parseDate('01.01.2022 25:00')).toBeNull();
+      expect(parseDate('30.02.2022 24:00')).toBeNull();
+    });
+  });
+
+  describe('intervalStart', () => {
+    it('shifts a ČEZ timestamp back by one 15-minute interval', () => {
+      const start = intervalStart(new Date(2022, 0, 1, 0, 15));
+      expect(start.getFullYear()).toBe(2022);
+      expect(start.getDate()).toBe(1);
+      expect(start.getHours()).toBe(0);
+      expect(start.getMinutes()).toBe(0);
+    });
+
+    it('keeps the last interval of the year inside that year', () => {
+      // Old format: the final row is 01.01.<next year> 00:00.
+      const start = intervalStart(new Date(2023, 0, 1, 0, 0));
+      expect(start.getFullYear()).toBe(2022);
+      expect(start.getMonth()).toBe(11);
+      expect(start.getDate()).toBe(31);
+      expect(start.getHours()).toBe(23);
+      expect(start.getMinutes()).toBe(45);
+    });
+
+    it('shifts by 15 minutes of absolute time across the spring DST jump', () => {
+      // 27.03.2022: local time jumps 02:00 → 03:00. The interval ending at
+      // 03:00 CEST starts at 01:45 CET.
+      const start = intervalStart(new Date(2022, 2, 27, 3, 0));
+      expect(start.getHours()).toBe(1);
+      expect(start.getMinutes()).toBe(45);
+    });
+  });
+
   describe('parseValue', () => {
     it('parses integer values', () => {
       expect(parseValue('0')).toBe(0);
@@ -99,29 +156,34 @@ describe('csvParser', () => {
       expect(parseValue('  0.5  ')).toBe(0.5);
     });
 
-    it('returns 0 for empty string', () => {
-      expect(parseValue('')).toBe(0);
-      expect(parseValue('  ')).toBe(0);
+    it('returns null for an empty cell (a missing reading is not 0 kWh)', () => {
+      // A missing measurement used to be silently counted as zero consumption,
+      // which under-reported totals and inflated the off-grid day count.
+      expect(parseValue('')).toBeNull();
+      expect(parseValue('  ')).toBeNull();
     });
 
     it('returns null for invalid values', () => {
       expect(parseValue('abc')).toBeNull();
     });
 
-    it('clamps negative values to 0 (ČEZ data are non-negative)', () => {
-      expect(parseValue('-1')).toBe(0);
-      expect(parseValue('-0.5')).toBe(0);
-      expect(parseValue('-0,001')).toBe(0);
+    it('returns null for negative values (ČEZ registers are non-negative)', () => {
+      // A negative reading means the wrong file or a broken export. Clamping it
+      // to 0 hid that from the user; the row is now reported instead.
+      expect(parseValue('-1')).toBeNull();
+      expect(parseValue('-0.5')).toBeNull();
+      expect(parseValue('-0,001')).toBeNull();
     });
 
-    it('parseValue("1,234,567") – documents current behavior: only the FIRST comma is replaced', () => {
-      // The implementation uses String.replace(',', '.') which replaces only the
-      // first occurrence of a comma. '1,234,567' becomes '1.234,567', and
-      // parseFloat stops at the second comma → returns 1.234, NOT 1234567.
-      // BUG NOTE: This means values with thousands-separator commas are silently
-      // truncated. The expected value below documents the current (incorrect)
-      // behaviour so that any future fix will be visible in the test diff.
-      expect(parseValue('1,234,567')).toBeCloseTo(1.234);
+    it('returns null for ambiguous numbers with several separators', () => {
+      // "1,234,567" could mean 1234567 or 1.234 depending on the locale.
+      // Guessing produced a silently truncated value; rejecting it is honest.
+      expect(parseValue('1,234,567')).toBeNull();
+      expect(parseValue('1.234.567')).toBeNull();
+    });
+
+    it('accepts a space used as a thousands separator', () => {
+      expect(parseValue('1 234,5')).toBeCloseTo(1234.5);
     });
   });
 
@@ -247,17 +309,61 @@ invalid date;0.1;OK;
       expect(result.dateRange).toBeNull();
     });
 
-    it('handles a data row with a missing value (empty second column)', () => {
+    it('rejects a data row with a missing value and reports it', () => {
       const csv = `"Datum";"a+";"Status";
 01.01.2022 00:15;;data OK;
 01.01.2022 00:30;0.5;data OK;`;
       const result = parseCSV(csv);
-      // parseValue('') returns 0, so the row with empty value is still valid.
-      // Both rows should parse successfully.
+      // An empty cell is a missing measurement, not zero consumption.
+      expect(result.success).toBe(true);
+      expect(result.recordCount).toBe(1);
+      expect(result.data[0].value).toBeCloseTo(0.5);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toMatch(/Řádek 2/);
+      expect(result.quality.rejectedRows).toBe(1);
+      expect(result.quality.validRows).toBe(1);
+    });
+
+    it('accepts the end-of-day timestamp 24:00:00 used by the "+A/… [kW]" export', () => {
+      // ČEZ marks the last interval of each day as 24:00:00. It used to roll
+      // over into the next day and get rejected – 365 lost rows per year.
+      const csv = `"Datum";"+A/84121509 [kW]";"Status";
+"31.12.2025 23:45:00";1,5;"naměřená data OK";
+"31.12.2025 24:00:00";2,5;"naměřená data OK";`;
+      const result = parseCSV(csv);
       expect(result.success).toBe(true);
       expect(result.recordCount).toBe(2);
-      // First record has value 0 (empty string → 0)
-      expect(result.data[0].value).toBe(0);
+      expect(result.errors).toEqual([]);
+      // Interval starts: 23:30 and 23:45 of 31.12.2025 – the year does not bleed.
+      expect(result.data[1].timestamp.getFullYear()).toBe(2025);
+      expect(result.data[1].timestamp.getMonth()).toBe(11);
+      expect(result.data[1].timestamp.getDate()).toBe(31);
+      expect(result.data[1].timestamp.getHours()).toBe(23);
+      expect(result.data[1].timestamp.getMinutes()).toBe(45);
+    });
+
+    it('counts rows whose Status column reports an invalid or unknown reading', () => {
+      const csv = `"Datum";"a+";"Status";
+01.01.2022 00:15;0.3;naměřená data OK;
+01.01.2022 00:30;0;neplatná data;
+01.01.2022 00:45;0;neznámá hodnota;
+01.01.2022 01:00;0.4;naměřená data, výpadek napětí;`;
+      const result = parseCSV(csv);
+      expect(result.recordCount).toBe(4);
+      expect(result.quality.totalRows).toBe(4);
+      expect(result.quality.validRows).toBe(4);
+      // "výpadek napětí" is still a real measurement; the other two are not.
+      expect(result.quality.invalidStatusRows).toBe(2);
+    });
+
+    it('recognises invalid statuses even when the diacritics are mangled', () => {
+      // A sample file that has been re-saved through UTF-8 shows replacement
+      // characters instead of Czech letters; the prefix still matches.
+      const csv = `"Datum";"a+";"Status";
+01.01.2022 00:15;0;nezn��m� hodnota;
+01.01.2022 00:30;0;neplatn� data;`;
+      const result = parseCSV(csv);
+      expect(result.quality.invalidStatusRows).toBe(2);
     });
 
     it('handles CRLF line endings', () => {

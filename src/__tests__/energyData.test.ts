@@ -193,9 +193,10 @@ describe('energyData', () => {
       expect(records[0].production).toBe(1);
     });
 
-    it('overwrites earlier same-type value if duplicate timestamps appear (last wins)', () => {
-      // This documents current behavior: when two consumption points share a
-      // timestamp, the later one in input order wins.
+    it('sums readings that share a timestamp instead of overwriting them', () => {
+      // On the autumn DST night local time 02:00–02:45 occurs twice and both
+      // readings map to the same instant. Overwriting used to discard four
+      // intervals of energy every year; summing keeps the total correct.
       const ts = '2024-06-01T08:00';
       const result = mergeAndGroupByYear(
         [
@@ -204,7 +205,21 @@ describe('energyData', () => {
         ],
         []
       );
-      expect(result.get(2024)![0].consumption).toBe(2); // 8 / 4
+      expect(result.get(2024)![0].consumption).toBe(3); // (4 + 8) / 4
+    });
+
+    it('keeps the energy of the duplicated autumn DST hour', () => {
+      // 27.10.2024 02:00–02:45 appears twice in a real ČEZ export.
+      const points = [
+        makeRawPoint('2024-10-27T02:00', 1, 'consumption'),
+        makeRawPoint('2024-10-27T02:15', 1, 'consumption'),
+        makeRawPoint('2024-10-27T02:00', 3, 'consumption'),
+        makeRawPoint('2024-10-27T02:15', 3, 'consumption'),
+      ];
+      const result = mergeAndGroupByYear(points, []);
+      const total = result.get(2024)!.reduce((sum, r) => sum + r.consumption, 0);
+      // (1 + 1 + 3 + 3) kW over four quarter-hours = 2 kWh
+      expect(total).toBeCloseTo(2);
     });
   });
 });
