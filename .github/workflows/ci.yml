@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Lint, build, testy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalace závislostí
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Produkční build
+        run: npm run build
+
+      - name: Testy s pokrytím
+        run: npm run test:coverage
+
+      - name: Uložit report pokrytí
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14

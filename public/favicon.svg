@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#101c31"/>
+  <!-- slunce -->
+  <circle cx="16" cy="10" r="4.2" fill="#f5a524"/>
+  <g stroke="#f5a524" stroke-width="1.6" stroke-linecap="round">
+    <path d="M16 2.4v2.2M16 15.4v2.2M23.6 10h-2.2M10.6 10H8.4M21.4 4.6l-1.6 1.6M12.2 13.8l-1.6 1.6M21.4 15.4l-1.6-1.6M12.2 6.2l-1.6-1.6"/>
+  </g>
+  <!-- panel -->
+  <path d="M7 28l3.4-7.6h11.2L25 28z" fill="#3ccfb5"/>
+  <g stroke="#101c31" stroke-width="1.2">
+    <path d="M12.2 20.4L10 28M19.8 20.4L22 28M9.3 24.2h13.4"/>
+  </g>
+</svg>

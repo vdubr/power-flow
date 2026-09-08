@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node", "vitest/globals"],
     "skipLibCheck": true,
 
     /* Bundler mode */
@@ -20,8 +20,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  /* Testy mají vlastní projekt (tsconfig.test.json) s typy Node a Vitest,
-     aby produkční kód neměl přístup k Node API. */
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"]
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"]
 }

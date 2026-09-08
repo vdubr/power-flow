@@ -23,5 +23,23 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    // Data z ČEZ jsou v české lokální zóně a testy ověřují chování kolem
+    // přechodů letního času. Bez připnuté zóny by výsledek závisel na stroji,
+    // kde testy běží (např. UTC runner v CI).
+    env: {
+      TZ: 'Europe/Prague',
+    },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/test/**',
+        'src/main.tsx',
+        'src/vite-env.d.ts',
+        'src/**/index.ts',
+      ],
+    },
   },
 })

@@ -7,11 +7,10 @@
 export const INTERVAL_MINUTES = 15;
 
 /**
- * Conversion factor from kW (power, as in CSV) to kWh (energy)
- * for a single 15-minute interval. Since 15 min = 1/4 hour,
- * energy_kWh = power_kW / 4.
+ * Number of measurement intervals in one hour (15 min → 4).
+ * Conversion from power to energy: energy_kWh = power_kW / INTERVALS_PER_HOUR.
  */
-export const KW_TO_KWH_PER_INTERVAL = 60 / INTERVAL_MINUTES; // = 4
+export const INTERVALS_PER_HOUR = 60 / INTERVAL_MINUTES; // = 4
 
 /**
  * Maximum number of raw points rendered in chart before sampling kicks in.

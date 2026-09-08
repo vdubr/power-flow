@@ -1,6 +1,6 @@
 import { EnergyRecord, RawDataPoint, YearStatistics } from '../types/energy';
 import { formatLocalDateKey } from './dateUtils';
-import { KW_TO_KWH_PER_INTERVAL } from '../constants';
+import { INTERVALS_PER_HOUR } from '../constants';
 
 /**
  * Calculate statistics for a sorted list of EnergyRecords belonging to a single year.
@@ -94,7 +94,7 @@ export function mergeAndGroupByYear(
 
   const addPoint = (point: RawDataPoint, field: 'consumption' | 'production') => {
     const key = point.timestamp.getTime();
-    const energyKwh = point.value / KW_TO_KWH_PER_INTERVAL;
+    const energyKwh = point.value / INTERVALS_PER_HOUR;
     const existing = recordMap.get(key);
     if (existing) {
       existing[field] = energyKwh;
