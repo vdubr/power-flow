@@ -11,7 +11,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     <Box
       sx={{
         minHeight: '100vh',
-        backgroundColor: 'background.default',
         display: 'flex',
         flexDirection: 'column',
       }}

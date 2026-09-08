@@ -1,12 +1,19 @@
 import {
   EnergyRecord,
   BatteryConfig,
-  BatteryState,
   BatterySimulationResult,
   MonthlyBatteryAnalysis,
   DailyGridImport,
+  DailyAverageLevel,
 } from '../types/energy';
 import { formatLocalDateKey, formatLocalMonthKey, parseLocalDateKey } from './dateUtils';
+import {
+  OFF_GRID_THRESHOLD_KWH,
+  RECOMMENDED_CAPACITY_DEFAULT_KWH,
+  RECOMMENDED_CAPACITY_MAX_KWH,
+  RECOMMENDED_CAPACITY_MIN_KWH,
+  RECOMMENDED_CAPACITY_PERCENTILE,
+} from '../constants';
 
 /**
  * Simulates battery operation over a period of energy data
@@ -28,7 +35,6 @@ export function simulateBattery(
   const usableCapacity = capacity * (maxDischargePercent / 100);
   const minChargeLevel = Math.max(capacity - usableCapacity, minReserve);
   
-  const batteryStates: BatteryState[] = [];
   // Start battery at minimum charge level (empty state, just above reserve)
   // This ensures the first measurable effect is real charging, not using pre-existing energy
   let currentCharge = minChargeLevel;
@@ -40,13 +46,17 @@ export function simulateBattery(
   let totalGridImportOriginal = 0;
   let totalGridExportOriginal = 0;
   
-  // Monthly tracking
+  // Monthly tracking (running sum + count instead of full chargeLevels array)
   const monthlyData = new Map<string, {
     energyStored: number;
     energyUsed: number;
-    chargeLevels: number[];
+    chargeSum: number;
+    chargeCount: number;
   }>();
-  
+
+  // Daily tracking for battery charge averages
+  const dailyChargeData = new Map<string, { chargeSum: number; count: number }>();
+
   // Daily tracking for grid import analysis
   const dailyData = new Map<string, {
     gridImport: number;
@@ -123,28 +133,25 @@ export function simulateBattery(
     dayData.totalProduction += record.production;
     dailyData.set(dayKey, dayData);
     
-    // Track monthly data
+    // Track monthly data (running sum avoids large intermediate arrays)
     const monthKey = formatLocalMonthKey(record.timestamp);
     const monthData = monthlyData.get(monthKey) || {
       energyStored: 0,
       energyUsed: 0,
-      chargeLevels: [],
+      chargeSum: 0,
+      chargeCount: 0,
     };
     monthData.energyStored += charged;
     monthData.energyUsed += discharged;
-    monthData.chargeLevels.push(currentCharge);
+    monthData.chargeSum += currentCharge;
+    monthData.chargeCount += 1;
     monthlyData.set(monthKey, monthData);
-    
-    batteryStates.push({
-      timestamp: record.timestamp,
-      chargeLevel: currentCharge,
-      charged,
-      discharged,
-      gridImport,
-      gridExport,
-      originalGridImport,
-      originalGridExport,
-    });
+
+    // Track daily charge averages (used by BatteryAnalysis chart)
+    const dayChargeData = dailyChargeData.get(dayKey) || { chargeSum: 0, count: 0 };
+    dayChargeData.chargeSum += currentCharge;
+    dayChargeData.count += 1;
+    dailyChargeData.set(dayKey, dayChargeData);
   }
   
   // Calculate savings
@@ -152,24 +159,22 @@ export function simulateBattery(
   const gridExportReduction = totalGridExportOriginal - totalGridExportWithBattery;
   const annualSavings = gridImportReduction * electricityPrice;
   
-  // Calculate average daily charge cycles
-  const daysSet = new Set(records.map(r => formatLocalDateKey(r.timestamp)));
-  const totalDays = daysSet.size;
-  const averageDailyChargeCycles = totalDays > 0 
-    ? (totalEnergyStored / capacity) / totalDays 
-    : 0;
+  // Calculate average daily charge cycles (guard against capacity = 0)
+  const totalDays = dailyChargeData.size;
+  const averageDailyChargeCycles =
+    totalDays > 0 && capacity > 0
+      ? (totalEnergyStored / capacity) / totalDays
+      : 0;
   
-  // Build monthly analysis
+  // Build monthly analysis (using pre-computed running sums)
   const monthlyAnalysis: MonthlyBatteryAnalysis[] = [];
   for (const [key, data] of monthlyData) {
     const [year, month] = key.split('-').map(Number);
-    const avgCharge = data.chargeLevels.length > 0
-      ? data.chargeLevels.reduce((a, b) => a + b, 0) / data.chargeLevels.length
-      : 0;
-    
+    const avgCharge = data.chargeCount > 0 ? data.chargeSum / data.chargeCount : 0;
+
     // Calculate monthly savings (energy used from battery * price)
     const monthlySavings = data.energyUsed * electricityPrice;
-    
+
     monthlyAnalysis.push({
       month,
       year,
@@ -191,7 +196,7 @@ export function simulateBattery(
   let offGridDays = 0;
   
   for (const [dateStr, data] of dailyData) {
-    const isOffGrid = data.gridImport < 0.01; // Less than 10Wh is considered off-grid
+    const isOffGrid = data.gridImport < OFF_GRID_THRESHOLD_KWH;
     
     // NOTE: data.totalConsumption is grid import (ČEZ data), not household consumption
     // "Self-sufficiency" here means: what percentage of the original grid import
@@ -218,12 +223,20 @@ export function simulateBattery(
   
   // Sort daily data by date
   dailyGridImport.sort((a, b) => a.date.getTime() - b.date.getTime());
-  
+
   const offGridDaysPercent = totalDays > 0 ? (offGridDays / totalDays) * 100 : 0;
-  
+
+  // Build pre-aggregated daily average charge levels (replaces full batteryStates array)
+  const dailyAverageLevels: DailyAverageLevel[] = Array.from(dailyChargeData.entries())
+    .map(([date, data]) => ({
+      date,
+      avgCharge: data.count > 0 ? data.chargeSum / data.count : 0,
+    }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
   // Calculate recommended capacity
   const recommendedCapacity = calculateRecommendedCapacity(records);
-  
+
   return {
     config,
     recommendedCapacity,
@@ -233,7 +246,7 @@ export function simulateBattery(
     gridExportReduction,
     gridImportReduction,
     averageDailyChargeCycles,
-    batteryStates,
+    dailyAverageLevels,
     monthlyAnalysis,
     dailyGridImport,
     offGridDays,
@@ -275,40 +288,21 @@ export function calculateRecommendedCapacity(records: EnergyRecord[]): number {
   }
   
   if (surpluses.length === 0) {
-    return 5; // Default recommendation
+    return RECOMMENDED_CAPACITY_DEFAULT_KWH;
   }
-  
-  // Sort and get 80th percentile as recommendation
-  surpluses.sort((a, b) => a - b);
-  const percentile80Index = Math.floor(surpluses.length * 0.8);
-  const recommended = surpluses[percentile80Index];
-  
-  // Round to nearest 0.5 kWh and ensure reasonable bounds
-  return Math.max(2, Math.min(30, Math.round(recommended * 2) / 2));
-}
 
-/**
- * Analyze optimal battery capacity by running simulations
- * with different capacities
- */
-export function analyzeBatteryCapacities(
-  records: EnergyRecord[],
-  baseConfig: Omit<BatteryConfig, 'capacity'>,
-  capacities: number[] = [5, 7.5, 10, 12.5, 15, 20]
-): Array<{ capacity: number; savings: number; utilization: number }> {
-  return capacities.map(capacity => {
-    const config: BatteryConfig = { ...baseConfig, capacity };
-    const result = simulateBattery(records, config);
-    
-    // Calculate utilization as percentage of capacity actually used
-    const utilization = (result.totalEnergyUsedFromBattery / (capacity * 365)) * 100;
-    
-    return {
-      capacity,
-      savings: result.annualSavings,
-      utilization: Math.min(100, utilization),
-    };
-  });
+  // Sort and pick the configured percentile as the recommendation.
+  // The percentile picks a value that is comfortably above most days but
+  // not driven by extreme outliers.
+  surpluses.sort((a, b) => a - b);
+  const idx = Math.floor(surpluses.length * RECOMMENDED_CAPACITY_PERCENTILE);
+  const recommended = surpluses[idx];
+
+  // Round to nearest 0.5 kWh and clamp to reasonable bounds
+  return Math.max(
+    RECOMMENDED_CAPACITY_MIN_KWH,
+    Math.min(RECOMMENDED_CAPACITY_MAX_KWH, Math.round(recommended * 2) / 2)
+  );
 }
 
 /**

@@ -6,8 +6,37 @@ import {
   DayNightConfig,
   LocationConfig,
 } from '../types/energy';
-import { isDaytime, isDaytimeManual } from './sunCalculations';
+import { isDaytimeManual, getSunTimes } from './sunCalculations';
 import { formatLocalDateKey, formatLocalMonthKey } from './dateUtils';
+import { MAX_RAW_CHART_POINTS } from '../constants';
+
+/**
+ * Cache for sun times keyed by "YYYY-MM-DD|lat|lng".
+ * Sunrise/sunset changes at most once per day per location, so we compute it
+ * at most 365 times per year instead of once per 15-minute record (~35 000/year).
+ */
+const sunTimesCache = new Map<string, { sunrise: Date; sunset: Date }>();
+
+function getCachedSunTimes(
+  dateKey: string,
+  location: LocationConfig
+): { sunrise: Date; sunset: Date } {
+  const cacheKey = `${dateKey}|${location.latitude}|${location.longitude}`;
+  let cached = sunTimesCache.get(cacheKey);
+  if (!cached) {
+    // Use noon of the local date as representative time for SunCalc
+    const [y, m, d] = dateKey.split('-').map(Number);
+    cached = getSunTimes(new Date(y, m - 1, d, 12, 0, 0), location);
+    sunTimesCache.set(cacheKey, cached);
+  }
+  return cached;
+}
+
+function isDaytimeCached(timestamp: Date, location: LocationConfig): boolean {
+  const dateKey = formatLocalDateKey(timestamp);
+  const { sunrise, sunset } = getCachedSunTimes(dateKey, location);
+  return timestamp >= sunrise && timestamp < sunset;
+}
 
 /**
  * Get the start of day for a date
@@ -16,6 +45,26 @@ function startOfDay(date: Date): Date {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+/**
+ * Get the start of hour for a date
+ */
+function startOfHour(date: Date): Date {
+  const d = new Date(date);
+  d.setMinutes(0, 0, 0);
+  return d;
+}
+
+/**
+ * Returns a "YYYY-MM-DDTHH" key based on the date's LOCAL time components.
+ */
+function formatLocalHourKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  return `${y}-${m}-${d}T${h}`;
 }
 
 /**
@@ -44,6 +93,9 @@ function formatPeriod(start: Date, end: Date, type: AggregationType): string {
   const options: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
   
   switch (type) {
+    case 'hourly':
+      return start.toLocaleDateString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
+        ' ' + start.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
     case 'daily':
       return start.toLocaleDateString('cs-CZ', options);
     case 'weekly':
@@ -60,8 +112,7 @@ function formatPeriod(start: Date, end: Date, type: AggregationType): string {
  */
 function groupByPeriod(
   records: EnergyRecord[],
-  getKey: (date: Date) => string,
-  getStart: (date: Date) => Date
+  getKey: (date: Date) => string
 ): Map<string, EnergyRecord[]> {
   const groups = new Map<string, EnergyRecord[]>();
   
@@ -137,8 +188,7 @@ function calculateAggregation(
 export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
   const groups = groupByPeriod(
     records,
-    (date) => formatLocalDateKey(date),
-    startOfDay
+    (date) => formatLocalDateKey(date)
   );
   
   const result: AggregatedData[] = [];
@@ -161,13 +211,40 @@ export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
 }
 
 /**
+ * Aggregate records by hour
+ */
+export function aggregateByHour(records: EnergyRecord[]): AggregatedData[] {
+  const groups = groupByPeriod(
+    records,
+    (date) => formatLocalHourKey(date)
+  );
+
+  const result: AggregatedData[] = [];
+
+  for (const [, groupRecords] of groups) {
+    const start = startOfHour(groupRecords[0].timestamp);
+    const end = new Date(start);
+    end.setHours(end.getHours() + 1);
+    end.setMilliseconds(-1);
+
+    result.push(calculateAggregation(
+      groupRecords,
+      formatPeriod(start, end, 'hourly'),
+      start,
+      end
+    ));
+  }
+
+  return result.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+}
+
+/**
  * Aggregate records by week
  */
 export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
   const groups = groupByPeriod(
     records,
-    (date) => formatLocalDateKey(startOfWeek(date)),
-    startOfWeek
+    (date) => formatLocalDateKey(startOfWeek(date))
   );
   
   const result: AggregatedData[] = [];
@@ -195,8 +272,7 @@ export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
 export function aggregateByMonth(records: EnergyRecord[]): AggregatedData[] {
   const groups = groupByPeriod(
     records,
-    (date) => formatLocalMonthKey(date),
-    startOfMonth
+    (date) => formatLocalMonthKey(date)
   );
   
   const result: AggregatedData[] = [];
@@ -227,8 +303,7 @@ export function aggregateByDayNight(
   // Group by date first
   const dayGroups = groupByPeriod(
     records,
-    (date) => formatLocalDateKey(date),
-    startOfDay
+    (date) => formatLocalDateKey(date)
   );
   
   const result: DayNightData[] = [];
@@ -245,7 +320,7 @@ export function aggregateByDayNight(
       let isDay: boolean;
       
       if (config.mode === 'sun' && location) {
-        isDay = isDaytime(record.timestamp, location);
+        isDay = isDaytimeCached(record.timestamp, location);
       } else {
         isDay = isDaytimeManual(
           record.timestamp,
@@ -280,7 +355,7 @@ export function aggregateByDayNight(
  */
 export function getRawData(
   records: EnergyRecord[],
-  maxPoints: number = 10000
+  maxPoints: number = MAX_RAW_CHART_POINTS
 ): EnergyRecord[] {
   if (records.length <= maxPoints) {
     return records;
@@ -298,35 +373,6 @@ export function getRawData(
 }
 
 /**
- * Main aggregation function
- */
-export function aggregateData(
-  records: EnergyRecord[],
-  type: AggregationType,
-  dayNightConfig?: DayNightConfig,
-  location?: LocationConfig
-): AggregatedData[] | DayNightData[] | EnergyRecord[] {
-  switch (type) {
-    case 'raw':
-      return getRawData(records);
-    case 'dayNight':
-      return aggregateByDayNight(
-        records,
-        dayNightConfig || { mode: 'manual', manualDayStart: '06:00', manualDayEnd: '20:00' },
-        location
-      );
-    case 'daily':
-      return aggregateByDay(records);
-    case 'weekly':
-      return aggregateByWeek(records);
-    case 'monthly':
-      return aggregateByMonth(records);
-    default:
-      return aggregateByDay(records);
-  }
-}
-
-/**
  * Filter records by time range
  */
 export function filterByTimeRange(
@@ -341,26 +387,37 @@ export function filterByTimeRange(
   });
 }
 
-/**
- * Filter records by year
- */
-export function filterByYear(records: EnergyRecord[], year: number): EnergyRecord[] {
-  return records.filter((record) => record.timestamp.getFullYear() === year);
+export interface TopConsumptionDay {
+  date: Date;
+  consumption: number;
+  production: number;
 }
 
 /**
- * Normalize records to day of year (for multi-year comparison)
- * Returns records with timestamp normalized to same year (2000)
+ * Returns the top N days with highest consumption, sorted descending.
  */
-export function normalizeToYear(records: EnergyRecord[]): EnergyRecord[] {
-  return records.map((record) => ({
-    ...record,
-    timestamp: new Date(
-      2000,
-      record.timestamp.getMonth(),
-      record.timestamp.getDate(),
-      record.timestamp.getHours(),
-      record.timestamp.getMinutes()
-    ),
-  }));
+export function getTopConsumptionDays(
+  records: EnergyRecord[],
+  n: number = 10
+): TopConsumptionDay[] {
+  const dailyMap = new Map<string, { date: Date; consumption: number; production: number }>();
+
+  for (const record of records) {
+    const key = formatLocalDateKey(record.timestamp);
+    const existing = dailyMap.get(key);
+    if (existing) {
+      existing.consumption += record.consumption;
+      existing.production += record.production;
+    } else {
+      dailyMap.set(key, {
+        date: startOfDay(record.timestamp),
+        consumption: record.consumption,
+        production: record.production,
+      });
+    }
+  }
+
+  return Array.from(dailyMap.values())
+    .sort((a, b) => b.consumption - a.consumption)
+    .slice(0, n);
 }

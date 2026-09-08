@@ -1,0 +1,4 @@
+# Ukázkové exporty z ČEZ Distribuce jsou Windows-1250 s CRLF.
+# Testy nad nimi ověřují chování na reálném formátu, proto se nesmí
+# převádět konce řádků ani kódování.
+*.csv -text

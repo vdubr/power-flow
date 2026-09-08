@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# VS Code Local History extension
+.history
+
+# Test artifacts
+coverage
+playwright-report
+test-results
+.playwright-mcp
+
+# Duplicate of public/sample-data/2022 – kept locally, not versioned
+test-data
+
+# Redundantní archiv – obsah je rozbalený v design/design_handoff/
+design/solar.zip

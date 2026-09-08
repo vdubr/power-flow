@@ -32,6 +32,8 @@ export interface YearlyData {
   year: number;
   records: EnergyRecord[];
   statistics: YearStatistics;
+  hasProduction: boolean;
+  hasConsumption: boolean;
 }
 
 export interface YearStatistics {
@@ -49,7 +51,10 @@ export interface YearStatistics {
 }
 
 // Aggregation types
-export type AggregationType = 'raw' | 'dayNight' | 'daily' | 'weekly' | 'monthly';
+export type AggregationType = 'raw' | 'hourly' | 'dayNight' | 'daily' | 'weekly' | 'monthly';
+
+// Range mode controls how the active records subset is selected
+export type RangeMode = 'avg' | 'last' | 'selection';
 
 export interface DayNightData {
   date: Date;
@@ -78,6 +83,11 @@ export interface BatteryState {
   originalGridExport: number; // kWh - original export without battery
 }
 
+export interface DailyAverageLevel {
+  date: string; // YYYY-MM-DD (formatLocalDateKey)
+  avgCharge: number; // kWh - average charge level for the day
+}
+
 export interface BatterySimulationResult {
   config: BatteryConfig;
   recommendedCapacity: number;
@@ -87,7 +97,7 @@ export interface BatterySimulationResult {
   gridExportReduction: number; // kWh - how much less exported to grid
   gridImportReduction: number; // kWh - how much less imported from grid
   averageDailyChargeCycles: number;
-  batteryStates: BatteryState[];
+  dailyAverageLevels: DailyAverageLevel[]; // Pre-aggregated daily averages (replaces batteryStates)
   monthlyAnalysis: MonthlyBatteryAnalysis[];
   dailyGridImport: DailyGridImport[]; // Daily grid import analysis
   offGridDays: number; // Number of days that could run off-grid
@@ -110,15 +120,6 @@ export interface DailyGridImport {
   gridExport: number; // kWh - energy exported to grid with battery
   isOffGrid: boolean; // true if no grid import needed
   selfSufficiencyPercent: number; // percentage of consumption covered by FVE + battery
-}
-
-export interface DailyBatteryState {
-  date: Date;
-  energyStored: number;
-  energyUsed: number;
-  peakChargeLevel: number;
-  minChargeLevel: number;
-  gridImportSaved: number;
 }
 
 // Location for sun calculations
@@ -152,15 +153,6 @@ export interface CSVParseResult {
   recordCount: number;
 }
 
-export interface FileUploadState {
-  consumptionFile: File | null;
-  productionFile: File | null;
-  consumptionData: RawDataPoint[];
-  productionData: RawDataPoint[];
-  isLoading: boolean;
-  errors: string[];
-}
-
 // Chart configuration
 export interface ChartConfig {
   aggregationType: AggregationType;
@@ -169,13 +161,6 @@ export interface ChartConfig {
   showConsumption: boolean;
   showProduction: boolean;
   dayNightConfig: DayNightConfig;
-}
-
-// Application state
-export interface AppState {
-  yearlyData: Map<number, YearlyData>;
-  chartConfig: ChartConfig;
-  batteryConfig: BatteryConfig;
-  batterySimulation: BatterySimulationResult | null;
-  isLoading: boolean;
+  rangeMode: RangeMode;
+  showSunOverlay: boolean;
 }

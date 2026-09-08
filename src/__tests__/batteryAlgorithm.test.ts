@@ -42,7 +42,9 @@ describe('batteryAlgorithm', () => {
       const result = simulateBattery(records, defaultConfig);
 
       expect(result.totalEnergyStored).toBeGreaterThan(0);
-      expect(result.batteryStates[0].charged).toBeGreaterThan(0);
+      // dailyAverageLevels exists and has the right date
+      expect(result.dailyAverageLevels).toHaveLength(1);
+      expect(result.dailyAverageLevels[0].avgCharge).toBeGreaterThan(0);
     });
 
     it('discharges battery when there is deficit', () => {
@@ -53,7 +55,10 @@ describe('batteryAlgorithm', () => {
 
       const result = simulateBattery(records, defaultConfig);
 
-      expect(result.batteryStates[1].discharged).toBeGreaterThan(0);
+      // The daily average charge should reflect the discharge
+      expect(result.dailyAverageLevels).toHaveLength(1);
+      // totalEnergyUsedFromBattery should be positive
+      expect(result.totalEnergyUsedFromBattery).toBeGreaterThan(0);
     });
 
     it('respects minimum reserve', () => {
@@ -63,15 +68,16 @@ describe('batteryAlgorithm', () => {
         minReserve: 2,
       };
 
-      // Start with battery at 50% (2.5 kWh), need to discharge
+      // Start with battery at minimum (minChargeLevel = max(5*(1-80/100), 2) = max(1, 2) = 2)
       const records: EnergyRecord[] = [
         createRecord('01.01.2022 20:00', 5.0, 0), // Large deficit
       ];
 
       const result = simulateBattery(records, config);
 
-      // Battery should not discharge below minReserve
-      expect(result.batteryStates[0].chargeLevel).toBeGreaterThanOrEqual(config.minReserve);
+      // Battery should not discharge below minReserve;
+      // dailyAverageLevels reflects the resulting charge
+      expect(result.dailyAverageLevels[0].avgCharge).toBeGreaterThanOrEqual(config.minReserve);
     });
 
     it('calculates annual savings correctly', () => {
@@ -91,14 +97,250 @@ describe('batteryAlgorithm', () => {
 
       expect(result.totalEnergyStored).toBe(0);
       expect(result.annualSavings).toBe(0);
-      expect(result.batteryStates).toHaveLength(0);
+      expect(result.dailyAverageLevels).toHaveLength(0);
+    });
+
+    it('aggregates monthly analysis with year, month and sums', () => {
+      const records: EnergyRecord[] = [
+        // January: charge then discharge
+        createRecord('15.01.2022 12:00', 0, 4),
+        createRecord('15.01.2022 20:00', 3, 0),
+        // February: only charge
+        createRecord('15.02.2022 12:00', 0, 2),
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      expect(result.monthlyAnalysis).toHaveLength(2);
+      const jan = result.monthlyAnalysis[0];
+      const feb = result.monthlyAnalysis[1];
+      expect(jan.year).toBe(2022);
+      expect(jan.month).toBe(1);
+      expect(feb.month).toBe(2);
+      expect(jan.energyStored).toBeGreaterThan(0);
+      expect(jan.energyUsed).toBeGreaterThan(0);
+      // savings = energyUsed * price
+      expect(jan.savings).toBeCloseTo(jan.energyUsed * defaultConfig.electricityPrice);
+      expect(feb.energyStored).toBeGreaterThan(0);
+      expect(feb.energyUsed).toBe(0);
+    });
+
+    it('sorts monthly analysis chronologically across years', () => {
+      const records: EnergyRecord[] = [
+        createRecord('15.12.2021 12:00', 0, 1),
+        createRecord('15.01.2022 12:00', 0, 1),
+        createRecord('15.06.2021 12:00', 0, 1),
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      const ordered = result.monthlyAnalysis.map(m => `${m.year}-${m.month}`);
+      expect(ordered).toEqual(['2021-6', '2021-12', '2022-1']);
+    });
+
+    it('produces dailyGridImport rows with totals from original and battery-adjusted import', () => {
+      const records: EnergyRecord[] = [
+        // Morning surplus
+        createRecord('10.05.2022 10:00', 0, 5),
+        // Evening deficit covered by battery
+        createRecord('10.05.2022 20:00', 3, 0),
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      expect(result.dailyGridImport).toHaveLength(1);
+      const d = result.dailyGridImport[0];
+      // Original import = 3 (deficit at 20:00)
+      expect(d.gridImportOriginal).toBeCloseTo(3);
+      // Battery covered most of it → effective import smaller
+      expect(d.gridImport).toBeLessThan(d.gridImportOriginal);
+      // Self-sufficiency in this context = how much of import was covered
+      expect(d.selfSufficiencyPercent).toBeGreaterThan(0);
+      expect(d.selfSufficiencyPercent).toBeLessThanOrEqual(100);
+    });
+
+    it('marks a day as off-grid when battery-adjusted import is below threshold', () => {
+      const records: EnergyRecord[] = [
+        // Day with enough surplus to cover the small evening deficit
+        createRecord('10.05.2022 10:00', 0, 5),
+        createRecord('10.05.2022 20:00', 0.5, 0),
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      expect(result.offGridDays).toBe(1);
+      expect(result.offGridDaysPercent).toBe(100);
+      expect(result.dailyGridImport[0].isOffGrid).toBe(true);
+    });
+
+    it('counts no off-grid days when battery cannot cover deficit', () => {
+      const config: BatteryConfig = { ...defaultConfig, capacity: 1, minReserve: 0.5 };
+      const records: EnergyRecord[] = [
+        // No production, large deficit → must import from grid
+        createRecord('10.05.2022 20:00', 5, 0),
+      ];
+      const result = simulateBattery(records, config);
+      expect(result.offGridDays).toBe(0);
+      expect(result.offGridDaysPercent).toBe(0);
+    });
+
+    it('reports gridImportReduction and gridExportReduction', () => {
+      const records: EnergyRecord[] = [
+        createRecord('10.05.2022 10:00', 0, 4), // surplus charged
+        createRecord('10.05.2022 20:00', 3, 0), // discharge covers part of deficit
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      // Battery stored some of the surplus → less exported
+      expect(result.gridExportReduction).toBeGreaterThan(0);
+      // Battery covered some of the deficit → less imported
+      expect(result.gridImportReduction).toBeGreaterThan(0);
+      // Savings = import reduction * price
+      expect(result.annualSavings).toBeCloseTo(result.gridImportReduction * defaultConfig.electricityPrice);
+    });
+
+    it('computes averageDailyChargeCycles based on capacity and unique days', () => {
+      // Two days, each with a 4 kWh surplus stored → totalStored = 8
+      // capacity = 10 → cycles = 8 / 10 = 0.8 cycles total over 2 days = 0.4/day
+      const records: EnergyRecord[] = [
+        createRecord('01.06.2022 12:00', 0, 4),
+        createRecord('02.06.2022 12:00', 0, 4),
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      expect(result.averageDailyChargeCycles).toBeCloseTo(0.4, 2);
+    });
+
+    it('does not charge beyond capacity', () => {
+      const config: BatteryConfig = { ...defaultConfig, capacity: 2, minReserve: 0 };
+      const records: EnergyRecord[] = [
+        createRecord('01.06.2022 12:00', 0, 100), // huge surplus
+      ];
+      const result = simulateBattery(records, config);
+      expect(result.dailyAverageLevels[0].avgCharge).toBeLessThanOrEqual(config.capacity);
+      // Energy stored cannot exceed (capacity - minChargeLevel)
+      expect(result.totalEnergyStored).toBeLessThanOrEqual(config.capacity);
+    });
+
+    it('dailyAverageLevels has one entry per day, sorted by date', () => {
+      const records: EnergyRecord[] = [
+        createRecord('02.06.2022 12:00', 0, 2),
+        createRecord('01.06.2022 12:00', 0, 3),
+        createRecord('01.06.2022 18:00', 1, 0),
+      ];
+      const result = simulateBattery(records, defaultConfig);
+      // Two unique days
+      expect(result.dailyAverageLevels).toHaveLength(2);
+      // Sorted ascending by date string
+      expect(result.dailyAverageLevels[0].date).toBe('2022-06-01');
+      expect(result.dailyAverageLevels[1].date).toBe('2022-06-02');
+      // avgCharge is the mean of per-interval charge levels for that day
+      for (const entry of result.dailyAverageLevels) {
+        expect(entry.avgCharge).toBeGreaterThanOrEqual(0);
+        expect(Number.isFinite(entry.avgCharge)).toBe(true);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // Edge-case tests
+    // -----------------------------------------------------------------------
+
+    it('capacity=0: does not throw and produces no NaN/Infinity in result', () => {
+      const config: BatteryConfig = { ...defaultConfig, capacity: 0, minReserve: 0 };
+      const records: EnergyRecord[] = [
+        createRecord('01.01.2022 12:00', 1, 2),
+        createRecord('01.01.2022 20:00', 3, 0),
+      ];
+
+      let result: ReturnType<typeof simulateBattery>;
+      expect(() => {
+        result = simulateBattery(records, config);
+      }).not.toThrow();
+
+      // None of the scalar numeric fields should be NaN or Infinity
+      const scalars = [
+        result!.annualSavings,
+        result!.totalEnergyStored,
+        result!.totalEnergyUsedFromBattery,
+        result!.gridExportReduction,
+        result!.gridImportReduction,
+        result!.averageDailyChargeCycles,
+        result!.offGridDays,
+        result!.offGridDaysPercent,
+        result!.recommendedCapacity,
+      ];
+      for (const v of scalars) {
+        expect(Number.isFinite(v)).toBe(true);
+      }
+
+      // dailyAverageLevels entries must also be finite
+      for (const entry of result!.dailyAverageLevels) {
+        expect(Number.isFinite(entry.avgCharge)).toBe(true);
+      }
+    });
+
+    it('minReserve > capacity: battery neither charges nor discharges', () => {
+      const config: BatteryConfig = {
+        ...defaultConfig,
+        capacity: 5,
+        minReserve: 10, // Impossible reserve – above capacity
+        maxDischargePercent: 80,
+      };
+      const records: EnergyRecord[] = [
+        createRecord('01.01.2022 10:00', 0, 5), // Surplus
+        createRecord('01.01.2022 20:00', 3, 0), // Deficit
+      ];
+
+      const result = simulateBattery(records, config);
+
+      // With minReserve > capacity no usable capacity exists, so no energy flows
+      expect(result.totalEnergyStored).toBe(0);
+      expect(result.totalEnergyUsedFromBattery).toBe(0);
+    });
+
+    it('maxDischargePercent=0: battery cannot discharge, but charging is still possible', () => {
+      const config: BatteryConfig = {
+        ...defaultConfig,
+        capacity: 10,
+        maxDischargePercent: 0, // usableCapacity = 10 * 0/100 = 0 → minChargeLevel = max(10, minReserve)
+        minReserve: 0,
+      };
+      const records: EnergyRecord[] = [
+        createRecord('01.01.2022 12:00', 0, 5), // Surplus
+        createRecord('01.01.2022 20:00', 3, 0), // Deficit
+      ];
+
+      const result = simulateBattery(records, config);
+
+      // maxDischargePercent=0 means usableCapacity=0, so no energy can be discharged
+      expect(result.totalEnergyUsedFromBattery).toBe(0);
+    });
+
+    it('year-boundary: charging on 31.12 and discharging on 1.1 crosses calendar year', () => {
+      const records: EnergyRecord[] = [
+        createRecord('31.12.2022 23:45', 0, 4),  // Surplus – charges battery (2022)
+        createRecord('01.01.2023 00:15', 3, 0),  // Deficit  – discharges battery (2023)
+      ];
+
+      const result = simulateBattery(records, defaultConfig);
+
+      // monthlyAnalysis should have entries for Dec 2022 and Jan 2023
+      const dec2022 = result.monthlyAnalysis.find(m => m.year === 2022 && m.month === 12);
+      const jan2023 = result.monthlyAnalysis.find(m => m.year === 2023 && m.month === 1);
+
+      expect(dec2022).toBeDefined();
+      expect(jan2023).toBeDefined();
+
+      // December should show charging
+      expect(dec2022!.energyStored).toBeGreaterThan(0);
+
+      // January should show discharging (battery had energy stored from Dec)
+      expect(jan2023!.energyUsed).toBeGreaterThan(0);
+
+      // Cross-year discharge actually reduces grid import in Jan 2023
+      expect(result.gridImportReduction).toBeGreaterThan(0);
+
+      // dailyAverageLevels must cover both days
+      const dates = result.dailyAverageLevels.map(d => d.date);
+      expect(dates).toContain('2022-12-31');
+      expect(dates).toContain('2023-01-01');
     });
   });
 
   describe('calculateRecommendedCapacity', () => {
     it('returns reasonable capacity for typical usage', () => {
       const records: EnergyRecord[] = [];
-      
+
       // Simulate a few days of typical solar pattern
       for (let day = 1; day <= 10; day++) {
         // Night - consumption only

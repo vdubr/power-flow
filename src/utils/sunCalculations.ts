@@ -62,23 +62,6 @@ export function getDefaultLocation(): LocationConfig {
 }
 
 /**
- * Format sun times for display
- */
-export function formatSunTimes(sunTimes: SunTimes): { sunrise: string; sunset: string } {
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('cs-CZ', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-  
-  return {
-    sunrise: formatTime(sunTimes.sunrise),
-    sunset: formatTime(sunTimes.sunset),
-  };
-}
-
-/**
  * Predefined locations in Czech Republic
  */
 export const CZECH_LOCATIONS: LocationConfig[] = [

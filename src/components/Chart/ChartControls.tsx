@@ -15,11 +15,12 @@ import {
   Autocomplete,
 } from '@mui/material';
 import { useEnergyStore } from '../../store/energyStore';
-import { AggregationType, DayNightConfig, LocationConfig } from '../../types/energy';
+import { AggregationType, LocationConfig } from '../../types/energy';
 import { CZECH_LOCATIONS, getDefaultLocation } from '../../utils/sunCalculations';
 
 const AGGREGATION_OPTIONS: Array<{ value: AggregationType; label: string; description: string }> = [
   { value: 'raw', label: '15min intervaly', description: 'Surová data (omezeno na 5000 bodů)' },
+  { value: 'hourly', label: '1 hodina', description: 'Součet po hodinách' },
   { value: 'dayNight', label: 'Den/Noc', description: 'Agregace podle denní/noční doby' },
   { value: 'daily', label: 'Denní', description: 'Součet za každý den' },
   { value: 'weekly', label: 'Týdenní', description: 'Součet za každý týden' },
@@ -27,23 +28,19 @@ const AGGREGATION_OPTIONS: Array<{ value: AggregationType; label: string; descri
 ];
 
 const ChartControls: React.FC = () => {
-  const {
-    chartConfig,
-    availableYears,
-    setAggregationType,
-    setSelectedYears,
-    toggleConsumption,
-    toggleProduction,
-    setDayNightConfig,
-  } = useEnergyStore();
-  
-  const {
-    aggregationType,
-    selectedYears,
-    showConsumption,
-    showProduction,
-    dayNightConfig,
-  } = chartConfig;
+  const availableYears = useEnergyStore((s) => s.availableYears);
+  const aggregationType = useEnergyStore((s) => s.chartConfig.aggregationType);
+  const selectedYears = useEnergyStore((s) => s.chartConfig.selectedYears);
+  const showConsumption = useEnergyStore((s) => s.chartConfig.showConsumption);
+  const showProduction = useEnergyStore((s) => s.chartConfig.showProduction);
+  const dayNightConfig = useEnergyStore((s) => s.chartConfig.dayNightConfig);
+  const showSunOverlay = useEnergyStore((s) => s.chartConfig.showSunOverlay);
+  const setAggregationType = useEnergyStore((s) => s.setAggregationType);
+  const setSelectedYears = useEnergyStore((s) => s.setSelectedYears);
+  const toggleConsumption = useEnergyStore((s) => s.toggleConsumption);
+  const toggleProduction = useEnergyStore((s) => s.toggleProduction);
+  const setDayNightConfig = useEnergyStore((s) => s.setDayNightConfig);
+  const setShowSunOverlay = useEnergyStore((s) => s.setShowSunOverlay);
   
   const handleYearChange = (year: number) => {
     const newYears = selectedYears.includes(year)
@@ -79,7 +76,7 @@ const ChartControls: React.FC = () => {
   const hasData = availableYears.length > 0;
   
   return (
-    <Paper elevation={3} sx={{ p: 2 }}>
+    <Paper className="paper-card fade-up" sx={{ p: 2 }}>
       <Typography variant="h6" gutterBottom>
         Nastavení grafu
       </Typography>
@@ -106,11 +103,45 @@ const ChartControls: React.FC = () => {
             ))}
           </Select>
         </FormControl>
+
+        {/* Sun overlay toggle */}
+        <Box>
+          <Typography variant="overline" className="micro-label" gutterBottom display="block">
+            Overlay
+          </Typography>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={showSunOverlay}
+                onChange={(e) => setShowSunOverlay(e.target.checked)}
+                disabled={
+                  !hasData ||
+                  !(aggregationType === 'raw' || aggregationType === 'hourly') ||
+                  selectedYears.length !== 1
+                }
+              />
+            }
+            label={<Typography variant="body2">Východ / západ slunce</Typography>}
+          />
+          {showSunOverlay &&
+            !(aggregationType === 'raw' || aggregationType === 'hourly') && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                Overlay je dostupný jen pro 15min a 1h zobrazení
+              </Typography>
+            )}
+          {showSunOverlay &&
+            (aggregationType === 'raw' || aggregationType === 'hourly') &&
+            selectedYears.length > 1 && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                Overlay je dostupný jen při výběru jednoho roku
+              </Typography>
+            )}
+        </Box>
         
         {/* Day/Night settings */}
         {aggregationType === 'dayNight' && (
           <Box sx={{ pl: 2, borderLeft: '3px solid', borderColor: 'primary.main' }}>
-            <Typography variant="subtitle2" gutterBottom>
+            <Typography variant="overline" className="micro-label" gutterBottom display="block">
               Nastavení Den/Noc
             </Typography>
             
@@ -180,7 +211,7 @@ const ChartControls: React.FC = () => {
         
         {/* Year selection */}
         <Box>
-          <Typography variant="subtitle2" gutterBottom>
+          <Typography variant="overline" className="micro-label" gutterBottom display="block">
             Roky k zobrazení
           </Typography>
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -209,7 +240,7 @@ const ChartControls: React.FC = () => {
         
         {/* Show/hide series */}
         <Box>
-          <Typography variant="subtitle2" gutterBottom>
+          <Typography variant="overline" className="micro-label" gutterBottom display="block">
             Zobrazit
           </Typography>
           <Stack direction="row" spacing={2}>
