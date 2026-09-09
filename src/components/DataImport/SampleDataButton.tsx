@@ -10,11 +10,11 @@ import type { SxProps, Theme } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { parseCSVFile } from '../../utils/csvParser';
 import { useEnergyStore } from '../../store/energyStore';
-import { DataQuality, RawDataPoint } from '../../types/energy';
+import { DataQuality, ImportSummary, RawDataPoint } from '../../types/energy';
 
 interface SampleDataButtonProps {
-  /** Called after a successful load with the combined quality of both files. */
-  onLoaded?: (quality: DataQuality) => void;
+  /** Called after a successful load with the combined quality and what changed. */
+  onLoaded?: (quality: DataQuality, summary: ImportSummary) => void;
   variant?: 'outlined' | 'text';
   size?: 'small' | 'medium';
   sx?: SxProps<Theme>;
@@ -68,7 +68,7 @@ const SampleDataButton: React.FC<SampleDataButtonProps> = ({
       const consumptionData: RawDataPoint[] = consumptionResult.data;
       const productionData: RawDataPoint[] = productionResult.data;
 
-      addData(consumptionData, productionData);
+      const summary = addData(consumptionData, productionData);
 
       if (onLoaded) {
         const combinedQuality: DataQuality = {
@@ -79,7 +79,7 @@ const SampleDataButton: React.FC<SampleDataButtonProps> = ({
           rejectedRows:
             consumptionResult.quality.rejectedRows + productionResult.quality.rejectedRows,
         };
-        onLoaded(combinedQuality);
+        onLoaded(combinedQuality, summary);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

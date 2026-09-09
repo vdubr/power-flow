@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Box,
   Paper,
@@ -12,6 +12,8 @@ import {
   ListItemText,
   Alert,
   AlertTitle,
+  Snackbar,
+  CircularProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -19,17 +21,20 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { useEnergyStore } from '../../store/energyStore';
-import { DataQuality } from '../../types/energy';
+import { DataQuality, ImportSummary } from '../../types/energy';
 import { getDefaultLocation } from '../../utils/sunCalculations';
 import { formatCount } from '../../utils/format';
 import DropZone from './DropZone';
-import StagedFilesList, {
-  StagedFile,
-  parseFileToStagedFile,
-  sumCommittedQuality,
-} from './StagedFilesList';
+import { parseFileToStagedFile, sumCommittedQuality } from './parsedFile';
+import { describeImport } from './importSummaryText';
+import { useGlobalDropGuard } from '../../hooks/useGlobalDropGuard';
 import YearBadge from './YearBadge';
 import DataQualityNote, { emptyQuality, mergeQuality } from './DataQualityNote';
+
+/** ČEZ exports are .csv; some browsers report the MIME type instead. */
+function isCsvFile(file: File): boolean {
+  return /\.csv$/i.test(file.name) || file.type === 'text/csv';
+}
 
 const FileUploader: React.FC = () => {
   const availableYears = useEnergyStore((s) => s.availableYears);
@@ -47,8 +52,11 @@ const FileUploader: React.FC = () => {
 
   const [expanded, setExpanded] = useState<boolean>(!hasLoadedData);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [parseErrors, setParseErrors] = useState<Array<{ fileName: string; error: string }>>([]);
+  /** Confirmation of the last import, shown briefly so it cannot be missed. */
+  const [importNotice, setImportNotice] = useState<ImportSummary | null>(null);
+  /** A drop landing mid-parse would interleave two batches. */
+  const processingRef = useRef(false);
   // Aggregate quality of every batch committed to the store so far, for
   // DataQualityNote. Deliberately local state, not a store field: resets on
   // "Vymazat všechna data", does not try to survive a per-year removal.
@@ -64,23 +72,32 @@ const FileUploader: React.FC = () => {
     prevHasLoadedDataRef.current = hasLoadedData;
   }, [hasLoadedData]);
 
-  const totalNewRecords = useMemo(
-    () => stagedFiles.reduce((sum, f) => sum + f.recordCount, 0),
-    [stagedFiles]
-  );
-
   const processFiles = useCallback(
     async (files: File[]) => {
-      if (files.length === 0) return;
+      if (files.length === 0 || processingRef.current) return;
+
+      processingRef.current = true;
       setIsProcessing(true);
+      try {
+        // Anything that is not a CSV used to be dropped without a word, so a
+        // dragged folder looked exactly like a broken app.
+        const csvFiles = files.filter(isCsvFile);
+        const rejected = files
+          .filter((file) => !isCsvFile(file))
+          .map((file) => ({
+            fileName: file.name,
+            error: 'Není soubor CSV. Složky ani jiné formáty načíst nelze.',
+          }));
 
-      const newStaged: StagedFile[] = await Promise.all(files.map(parseFileToStagedFile));
+        const parsed = await Promise.all(csvFiles.map(parseFileToStagedFile));
+        const successful = parsed.filter((f) => f.data.length > 0);
+        const failed = parsed
+          .filter((f) => !!f.error && f.data.length === 0)
+          .map((f) => ({
+            fileName: f.fileName,
+            error: f.error || 'Soubor se nepodařilo zpracovat',
+          }));
 
-      const successful = newStaged.filter((f) => f.data.length > 0);
-      const failed = newStaged.filter((f) => !!f.error && f.data.length === 0);
-
-      if (!hasLoadedData) {
-        // Empty state: auto-commit successful files and surface failures via Alert
         const consumptionData = successful
           .filter((f) => f.type === 'consumption')
           .flatMap((f) => f.data);
@@ -88,61 +105,48 @@ const FileUploader: React.FC = () => {
           .filter((f) => f.type === 'production')
           .flatMap((f) => f.data);
 
+        // One path for both states. The old confirmation step in the loaded
+        // state sat below the fold, so selecting files appeared to do nothing;
+        // addData merges field by field and is idempotent, so there is nothing
+        // to protect the user from.
         if (consumptionData.length > 0 || productionData.length > 0) {
-          addData(consumptionData, productionData);
+          const summary = addData(consumptionData, productionData);
           setImportedQuality((prev) => mergeQuality(prev, sumCommittedQuality(successful)));
+          setImportNotice(summary);
+          setExpanded(false);
         }
 
-        setParseErrors(
-          failed.map((f) => ({
-            fileName: f.fileName,
-            error: f.error || 'Soubor se nepodařilo zpracovat',
-          }))
-        );
-      } else {
-        // Loaded state: keep explicit "Načíst data" step
-        setStagedFiles((prev) => [...prev, ...newStaged]);
+        setParseErrors([...rejected, ...failed]);
+      } finally {
+        // Without this a thrown parse left the spinner running and the button
+        // disabled, with no way back except a reload.
+        processingRef.current = false;
+        setIsProcessing(false);
       }
-
-      setIsProcessing(false);
     },
-    [hasLoadedData, addData]
+    [addData]
   );
 
-  const handleRemoveStagedFile = useCallback((fileId: string) => {
-    setStagedFiles((prev) => prev.filter((f) => f.id !== fileId));
-  }, []);
-
-  const handleLoadData = useCallback(() => {
-    const consumptionData = stagedFiles
-      .filter((f) => f.type === 'consumption')
-      .flatMap((f) => f.data);
-    const productionData = stagedFiles
-      .filter((f) => f.type === 'production')
-      .flatMap((f) => f.data);
-
-    if (consumptionData.length === 0 && productionData.length === 0) {
-      return;
-    }
-
-    addData(consumptionData, productionData);
-    setImportedQuality((prev) => mergeQuality(prev, sumCommittedQuality(stagedFiles)));
-    setStagedFiles([]);
-    setParseErrors([]);
-    setExpanded(false);
-  }, [stagedFiles, addData]);
-
   const handleClearAll = useCallback(() => {
-    setStagedFiles([]);
     setParseErrors([]);
     clearData();
     setImportedQuality(emptyQuality());
+    setImportNotice(null);
     setExpanded(true);
   }, [clearData]);
 
-  const handleSampleDataLoaded = useCallback((quality: DataQuality) => {
-    setImportedQuality((prev) => mergeQuality(prev, quality));
-  }, []);
+  // A drop outside the zone — or while the bar is collapsed and the zone is
+  // unmounted — would otherwise make the browser open the CSV and discard the
+  // in-memory store.
+  useGlobalDropGuard(processFiles);
+
+  const handleSampleDataLoaded = useCallback(
+    (quality: DataQuality, summary: ImportSummary) => {
+      setImportedQuality((prev) => mergeQuality(prev, quality));
+      setImportNotice(summary);
+    },
+    []
+  );
 
   const toggleYear = useCallback(
     (year: number) => {
@@ -236,6 +240,14 @@ const FileUploader: React.FC = () => {
           <Typography variant="caption" color="text.secondary">
             {formatCount(totalRecords)} záznamů
           </Typography>
+          {isProcessing && (
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <CircularProgress size={14} aria-hidden />
+              <Typography variant="caption" color="text.secondary">
+                Zpracovávám soubory…
+              </Typography>
+            </Stack>
+          )}
           <Chip
             icon={<LocationOnIcon fontSize="small" />}
             label={locationName}
@@ -259,16 +271,7 @@ const FileUploader: React.FC = () => {
         <Paper className="paper-card fade-up" sx={{ p: 3 }}>
           {dropZone}
 
-          <StagedFilesList files={stagedFiles} onRemove={handleRemoveStagedFile} />
-
-          <Stack
-            direction="row"
-            spacing={2}
-            justifyContent="flex-end"
-            alignItems="center"
-            mt={2}
-            flexWrap="wrap"
-          >
+          <Stack direction="row" spacing={2} justifyContent="flex-end" mt={2} flexWrap="wrap">
             <Button
               variant="outlined"
               color="error"
@@ -277,18 +280,22 @@ const FileUploader: React.FC = () => {
             >
               Vymazat všechna data
             </Button>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={handleLoadData}
-              disabled={stagedFiles.length === 0 || stagedFiles.every((f) => f.data.length === 0)}
-            >
-              Načíst data do aplikace
-              {totalNewRecords > 0 && ` (${formatCount(totalNewRecords)} záznamů)`}
-            </Button>
           </Stack>
         </Paper>
       </Collapse>
+
+      <Snackbar
+        open={importNotice !== null}
+        autoHideDuration={8000}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        onClose={(_, reason) => {
+          if (reason !== 'clickaway') setImportNotice(null);
+        }}
+      >
+        <Alert severity="success" role="status" onClose={() => setImportNotice(null)}>
+          {importNotice ? describeImport(importNotice) : ''}
+        </Alert>
+      </Snackbar>
     </Stack>
   );
 };

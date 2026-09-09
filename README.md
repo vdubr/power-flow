@@ -8,7 +8,10 @@ Webová aplikace pro majitele fotovoltaiky, kteří se rozhodují, **zda a jakou
    - hlavičky `+A/XXXXXXXX [kW]` (odběr ze sítě) nebo `-A/XXXXXXXX [kW]` (přetoky do sítě), alternativně `a+` / `a-`
    - více souborů a více let najednou
    - hlásí, kolik řádků se nepodařilo přečíst a kolik intervalů ČEZ označil jako neplatné měření
-2. **Zobrazení bilance** – graf s agregací raw / hodinovou / denní / týdenní / měsíční / den-noc, TOP dny, porovnání let, výběr období tažením v grafu
+   - po importu potvrdí, co se načetlo, a přepne graf i statistiky na nahraný rok
+2. **Zobrazení bilance** – graf s agregací 15min / hodinovou / denní / týdenní / měsíční, TOP dny, porovnání let, výběr období tažením v grafu
+   - denní, týdenní a měsíční zobrazení jsou sloupcová
+   - přepínač **Den / noc** platí pro kterékoli zobrazení: u sloupců rozdělí spotřebu na denní a noční část, u 15min a hodinového vyznačí noc pásy
 3. **Doporučení kapacity baterie** – hlavní výstup: simulace celého rozsahu 2–30 kWh a doporučení v koleni křivky úspor, včetně grafu, který volbu dokládá
 4. **Simulace „co kdyby"** – kapacita, hloubka vybití, účinnost, rezerva, cena elektřiny a výkupní cena
 
@@ -51,10 +54,13 @@ Při přechodu na zimní čas exportuje ČEZ 02:00–02:45 dvakrát. JavaScript 
 | Celková spotřeba | součet odběru ze sítě | aktivní rozsah |
 | Celková výroba | součet dodávky do sítě | aktivní rozsah |
 | Poměr dodávky k odběru | `min(100, dodávka / odběr × 100)` | aktivní rozsah |
+| Spotřeba ve dne / v noci | rozdělení podle východu a západu slunce pro zvolenou lokalitu | aktivní rozsah |
 | Úspora za rok | `(ušetřený nákup − ušlý výkup) × 365 / počet dnů` | přepočteno na rok |
 | Doporučená kapacita | koleno křivky úspora–kapacita | aktivní rozsah |
 | Dny bez dokupu | dny s nulovým odběrem, oddělené od dnů, které by takové byly i bez baterie | aktivní rozsah |
 | Pokrytí odběru baterií | `snížení odběru / původní odběr`, vážené energií | aktivní rozsah |
+
+**Den a noc.** „Den" je od východu do západu slunce pro nastavenou lokalitu (výchozí Praha), noc je zbytek. Rozhodnutí dělá jediná funkce `createIsDayPredicate` v `src/utils/dayNight.ts`, takže sloupce v grafu, noční pásy i statistiky nemohou říkat něco jiného. Alternativou je ruční okno hodin. Výroba se nerozděluje, protože fotovoltaika po západu slunce do sítě nedodává.
 
 **Aktivní rozsah** je jediná podmnožina dat, se kterou pracuje graf, statistiky i simulace baterie současně. Přepíná se v ovládacím prvku v hlavičce sekcí: vybrané roky, poslední rok, nebo výseč vybraná tažením v grafu.
 
@@ -92,7 +98,7 @@ src/
 ├── components/
 │   ├── Chart/           # hlavní graf a jeho ovládání
 │   ├── Common/          # sdílené dlaždice, hlavičky sekcí, přepínač rozsahu
-│   ├── Configuration/   # formuláře nastavení (baterie, den/noc)
+│   ├── Configuration/   # formuláře nastavení (baterie)
 │   ├── DataImport/      # drop zóna, odznaky roků, návod, ukázková data
 │   ├── Layout/          # hlavička a shell aplikace
 │   └── Statistics/      # statistiky, doporučení kapacity, analýza baterie
@@ -110,6 +116,7 @@ src/
 │   ├── csvParser.ts           # parsování exportu ČEZ
 │   ├── dataAggregation.ts     # agregace, TOP dny, filtr rozsahu
 │   ├── dateUtils.ts           # klíče podle lokálního času, NE UTC
+│   ├── dayNight.ts            # jediné rozhodnutí „byl den?“ pro celou aplikaci
 │   ├── energyData.ts          # spojení odběru a dodávky, statistiky roku
 │   ├── format.ts              # veškeré formátování čísel v cs-CZ
 │   ├── sunCalculations.ts

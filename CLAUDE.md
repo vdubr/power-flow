@@ -39,6 +39,8 @@ Po každé změně spusť `npm run lint && npm run build && npm run test:run`.
 
 **Timestamp v CSV označuje konec intervalu.** Parser ho posouvá na začátek (`intervalStart()`), jinak vzniká fantomový rok a každý den je posunutý o 15 minut. Hodina `24:00` se normalizuje na půlnoc dalšího dne.
 
+**Den a noc.** Rozhodnutí „byl v tomto okamžiku den?" dělá jen `createIsDayPredicate` v `src/utils/dayNight.ts`. Agregace, noční pásy v grafu i statistiky ho volají; nikdy nepiš druhou kopii podmínky. Den/noc není typ agregace, ale přepínač `ChartConfig.showDayNight`, který platí pro kterékoli zobrazení.
+
 **Aktivní rozsah.** `selectActiveRecords()` ve storu určuje podmnožinu dat pro graf, statistiky i simulaci baterie současně. Nikdy nenech komponentu číst `allRecords` přímo, pokud nemá dobrý důvod — panely by si přestaly odpovídat.
 
 **Roční hodnoty** se normalizují počtem skutečně pokrytých dnů (`DAYS_PER_YEAR / daysSimulated`). Dva nahrané roky nesmí zdvojnásobit „roční úsporu".
@@ -73,7 +75,7 @@ src/
 ├── components/
 │   ├── Chart/           # hlavní graf a ovládání
 │   ├── Common/          # sdílené dlaždice a přepínač rozsahu
-│   ├── Configuration/   # formuláře nastavení (baterie, den/noc)
+│   ├── Configuration/   # formuláře nastavení (baterie)
 │   ├── DataImport/      # import, odznaky roků, návod
 │   ├── Layout/
 │   └── Statistics/      # statistiky, doporučení kapacity, baterie

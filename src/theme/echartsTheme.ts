@@ -205,6 +205,12 @@ export const CHART_PALETTE = {
  * selected (and, by convention, anywhere else a year needs a stable color –
  * year badges, chips). Index by `yearIndex % YEAR_SERIES_COLORS.length`.
  */
+/**
+ * Opacity of the night half of a day/night bar. One constant so the contrast
+ * between the two segments can be tuned in a single place.
+ */
+export const NIGHT_SEGMENT_ALPHA = 0.3;
+
 export const YEAR_SERIES_COLORS: readonly string[] = [
   HEX.amber,
   HEX.teal,

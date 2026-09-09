@@ -15,11 +15,13 @@ import { useEnergyStore } from '../store/energyStore';
 import { parseCSV, decodeWindows1250 } from '../utils/csvParser';
 import {
   aggregateByDay,
-  aggregateByDayNight,
+  aggregateByMonth,
+  aggregateByWeek,
   getTopConsumptionDays,
 } from '../utils/dataAggregation';
+import { createIsDayPredicate } from '../utils/dayNight';
 import { simulateBattery } from '../utils/batteryAlgorithm';
-import { BatteryConfig, CSVParseResult } from '../types/energy';
+import { AggregatedData, BatteryConfig, CSVParseResult } from '../types/energy';
 
 // ---------------------------------------------------------------------------
 // Pomocné funkce – načtení reálných ukázkových dat
@@ -162,22 +164,58 @@ describe('U2 špičky odběru', () => {
     expect([10, 11, 12, 1, 2, 3]).toContain(month);
   });
 
-  it('U2.3 rozdělení den/noc se sečte na denní součet pro každý den', () => {
+  it('U2.3 rozdělení den/noc se sečte na celek v denní, týdenní i měsíční agregaci', () => {
     loadYear(sample2022);
     const records = store().getActiveRecords();
-    const daily = aggregateByDay(records);
-    const dayNight = aggregateByDayNight(records, {
-      mode: 'manual',
-      manualDayStart: '06:00',
-      manualDayEnd: '20:00',
-    });
-    expect(dayNight).toHaveLength(daily.length);
-    for (let i = 0; i < daily.length; i++) {
-      expect(dayNight[i].dayConsumption + dayNight[i].nightConsumption).toBeCloseTo(
-        daily[i].totalConsumption,
-        6
-      );
+    const isDay = createIsDayPredicate(store().chartConfig.dayNightConfig);
+
+    const cases: Array<[string, (r: typeof records, p?: typeof isDay) => AggregatedData[]]> = [
+      ['denní', aggregateByDay],
+      ['týdenní', aggregateByWeek],
+      ['měsíční', aggregateByMonth],
+    ];
+
+    for (const [, aggregate] of cases) {
+      const plain = aggregate(records);
+      const split = aggregate(records, isDay);
+      expect(split).toHaveLength(plain.length);
+
+      for (let i = 0; i < plain.length; i++) {
+        const parts = split[i].dayNight!;
+        expect(parts.dayConsumption + parts.nightConsumption).toBeCloseTo(
+          plain[i].totalConsumption,
+          6
+        );
+        expect(parts.dayProduction + parts.nightProduction).toBeCloseTo(
+          plain[i].totalProduction,
+          6
+        );
+      }
     }
+  });
+
+  it('U2.4 bez predikátu se rozdělení nepočítá', () => {
+    loadYear(sample2022);
+    const plain = aggregateByDay(store().getActiveRecords());
+    expect(plain.every((period) => period.dayNight === undefined)).toBe(true);
+  });
+
+  it('U2.5 do sítě se v noci téměř nic nedodává', () => {
+    // Kontrola orientace predikátu na reálných datech: kdyby byl východ
+    // a západ slunce prohozený, byla by noční výroba téměř celá roční.
+    loadYear(sample2022);
+    const isDay = createIsDayPredicate(store().chartConfig.dayNightConfig);
+    const months = aggregateByMonth(store().getActiveRecords(), isDay);
+
+    let dayProduction = 0;
+    let nightProduction = 0;
+    for (const month of months) {
+      dayProduction += month.dayNight!.dayProduction;
+      nightProduction += month.dayNight!.nightProduction;
+    }
+    const total = dayProduction + nightProduction;
+    expect(total).toBeGreaterThan(0);
+    expect(nightProduction / total).toBeLessThan(0.05);
   });
 });
 
@@ -186,12 +224,20 @@ describe('U2 špičky odběru', () => {
 // ---------------------------------------------------------------------------
 
 describe('U3 porovnání let', () => {
-  it('U3.1 po nahrání dalšího roku zůstane původní výběr a nový rok je k dispozici', () => {
+  it('U3.1 po nahrání dalšího roku se zobrazí nahraný rok a porovnání je krok navíc', () => {
     loadYear(sample2022);
     loadYear(sample2025);
     expect(store().availableYears).toContain(2022);
     expect(store().availableYears).toContain(2025);
-    expect(store().chartConfig.selectedYears).toContain(2022);
+    // Uživatel vidí, co právě nahrál – dřív zůstal vybraný starý rok a import
+    // vypadal, jako by se nic nestalo.
+    expect(store().chartConfig.selectedYears).toEqual([2025]);
+
+    // Porovnání zapne kliknutím na odznak dřívějšího roku.
+    store().setSelectedYears([2022, 2025]);
+    const active = store().getActiveRecords();
+    const years = new Set(active.map((r) => r.timestamp.getFullYear()));
+    expect(years).toEqual(new Set([2022, 2025]));
   });
 
   it('U3.2 každý rok má vlastní nezávislé statistiky', () => {

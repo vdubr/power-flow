@@ -9,9 +9,8 @@ import {
   EnergyRecord,
   AggregatedData,
   AggregationType,
-  DayNightData,
   DayNightConfig,
-  LocationConfig,
+  DayNightSplit,
   YearlyData,
 } from '../types/energy';
 import {
@@ -19,12 +18,16 @@ import {
   aggregateByHour,
   aggregateByWeek,
   aggregateByMonth,
-  aggregateByDayNight,
   getRawData,
 } from './dataAggregation';
-import { getDefaultLocation, getSunTimes } from './sunCalculations';
+import { createIsDayPredicate, getDayBounds, resolveDayNightConfig } from './dayNight';
 import { formatLocalDateKey, parseLocalDateKey } from './dateUtils';
-import { CHART_PALETTE, YEAR_SERIES_COLORS, withAlpha } from '../theme/echartsTheme';
+import {
+  CHART_PALETTE,
+  YEAR_SERIES_COLORS,
+  withAlpha,
+  NIGHT_SEGMENT_ALPHA,
+} from '../theme/echartsTheme';
 import { formatKwh, formatDateTime, formatDate } from './format';
 
 /**
@@ -40,9 +43,13 @@ export interface ChartSeriesDef {
   type: 'line' | 'bar';
   data: Array<[string | number, number]>;
   color: string;
+  /** Line views only. */
   areaStyle?: { opacity: number };
   stack?: string;
+  /** Line views only: distinguishes the older year when comparing. */
   lineDashed?: boolean;
+  /** Set on the two halves of a day/night stack. */
+  role?: 'day' | 'night';
 }
 
 export interface BuiltChartSeries {
@@ -57,6 +64,8 @@ export interface BuildChartSeriesParams {
   showConsumption: boolean;
   showProduction: boolean;
   dayNightConfig: DayNightConfig;
+  /** Split bars into a day and a night segment; bands the night on time axes. */
+  showDayNight: boolean;
 }
 
 /**
@@ -74,6 +83,7 @@ export function buildChartSeries({
   showConsumption,
   showProduction,
   dayNightConfig,
+  showDayNight,
 }: BuildChartSeriesParams): BuiltChartSeries | null {
   if (selectedYears.length === 0 || yearlyData.size === 0) {
     return null;
@@ -81,6 +91,13 @@ export function buildChartSeries({
 
   const series: ChartSeriesDef[] = [];
   const allDates = new Set<string>();
+
+  // Built once, not per record: each call is a date key plus a map lookup.
+  // Time-axis views band the night instead of splitting bars, so they need none.
+  const isDay =
+    showDayNight && !isTimeAxisAggregation(aggregationType)
+      ? createIsDayPredicate(dayNightConfig)
+      : undefined;
 
   const latestSelectedYear = Math.max(...selectedYears);
   const isCompare = selectedYears.length > 1;
@@ -91,7 +108,7 @@ export function buildChartSeries({
 
     const records = yearData.records;
 
-    let aggregated: AggregatedData[] | DayNightData[] | EnergyRecord[];
+    let aggregated: AggregatedData[] | EnergyRecord[];
 
     switch (aggregationType) {
       case 'raw':
@@ -100,24 +117,17 @@ export function buildChartSeries({
       case 'hourly':
         aggregated = aggregateByHour(records);
         break;
-      case 'dayNight':
-        aggregated = aggregateByDayNight(
-          records,
-          dayNightConfig,
-          dayNightConfig.mode === 'sun' ? dayNightConfig.location || getDefaultLocation() : undefined
-        );
-        break;
       case 'daily':
-        aggregated = aggregateByDay(records);
+        aggregated = aggregateByDay(records, isDay);
         break;
       case 'weekly':
-        aggregated = aggregateByWeek(records);
+        aggregated = aggregateByWeek(records, isDay);
         break;
       case 'monthly':
-        aggregated = aggregateByMonth(records);
+        aggregated = aggregateByMonth(records, isDay);
         break;
       default:
-        aggregated = aggregateByDay(records);
+        aggregated = aggregateByDay(records, isDay);
     }
 
     const dashed = isCompare && year !== latestSelectedYear;
@@ -187,88 +197,93 @@ export function buildChartSeries({
           lineDashed: dashed,
         });
       }
-    } else if (aggregationType === 'dayNight') {
-      const dayNightData = aggregated as DayNightData[];
-
-      dayNightData.forEach((d) => {
-        allDates.add(formatLocalDateKey(d.date));
-      });
-
-      if (showConsumption) {
-        series.push({
-          name: `Den - Spotřeba ${year}`,
-          type: 'bar',
-          stack: `consumption-${year}`,
-          data: dayNightData.map((d) => [formatLocalDateKey(d.date), d.dayConsumption]),
-          color: CHART_PALETTE.consumption,
-        });
-        series.push({
-          name: `Noc - Spotřeba ${year}`,
-          type: 'bar',
-          stack: `consumption-${year}`,
-          data: dayNightData.map((d) => [formatLocalDateKey(d.date), d.nightConsumption]),
-          color: withAlpha(CHART_PALETTE.consumption, 0.3),
-        });
-      }
-
-      if (showProduction) {
-        series.push({
-          name: `Den - Výroba ${year}`,
-          type: 'bar',
-          stack: `production-${year}`,
-          data: dayNightData.map((d) => [formatLocalDateKey(d.date), d.dayProduction]),
-          color: CHART_PALETTE.production,
-        });
-        series.push({
-          name: `Noc - Výroba ${year}`,
-          type: 'bar',
-          stack: `production-${year}`,
-          data: dayNightData.map((d) => [formatLocalDateKey(d.date), d.nightProduction]),
-          color: withAlpha(CHART_PALETTE.production, 0.3),
-        });
-      }
     } else {
       const aggData = aggregated as AggregatedData[];
 
-      // For multi-year comparison, normalize dates to same year for overlay
-      const normalizeDate = (date: Date): string => {
-        if (isCompare) {
-          // Use month-day format for comparison
-          return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      // Comparing years overlays them on a shared month-day axis.
+      const normalizeDate = (date: Date): string =>
+        isCompare
+          ? `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+          : formatLocalDateKey(date);
+
+      const keys = aggData.map((d) => {
+        const key = normalizeDate(d.startDate);
+        allDates.add(key);
+        return key;
+      });
+
+      /**
+       * One quantity (consumption or production) as bars.
+       *
+       * With the day/night toggle the day part is pushed first and the night
+       * part second: ECharts stacks in series order, so the day sits at the
+       * bottom of the bar. Both halves come from the same `aggData` in the same
+       * order, which is what makes the stack line up.
+       *
+       * `splittable` is false for production: panels export nothing after
+       * sunset, so a night half would be a permanently empty legend entry.
+       */
+      const addBars = (
+        quantity: 'consumption' | 'production',
+        label: string,
+        baseColor: string,
+        total: (d: AggregatedData) => number,
+        dayPart: (split: DayNightSplit) => number,
+        nightPart: (split: DayNightSplit) => number,
+        splittable = true
+      ) => {
+        const suffix = isCompare ? ` ${year}` : '';
+
+        if (!showDayNight || !splittable) {
+          series.push({
+            name: `${label}${suffix}`,
+            type: 'bar',
+            data: aggData.map((d, i) => [keys[i], total(d)]),
+            color: baseColor,
+          });
+          return;
         }
-        return formatLocalDateKey(date);
+
+        const stack = `${quantity}-${year}`;
+        series.push({
+          name: `${label}${suffix} – den`,
+          type: 'bar',
+          stack,
+          role: 'day',
+          data: aggData.map((d, i) => [keys[i], d.dayNight ? dayPart(d.dayNight) : 0]),
+          color: baseColor,
+        });
+        series.push({
+          name: `${label}${suffix} – noc`,
+          type: 'bar',
+          stack,
+          role: 'night',
+          data: aggData.map((d, i) => [keys[i], d.dayNight ? nightPart(d.dayNight) : 0]),
+          color: withAlpha(baseColor, NIGHT_SEGMENT_ALPHA),
+        });
       };
 
       if (showConsumption) {
-        const consumptionData: Array<[string, number]> = aggData.map((d) => {
-          const dateKey = normalizeDate(d.startDate);
-          allDates.add(dateKey);
-          return [dateKey, d.totalConsumption];
-        });
-        series.push({
-          name: isCompare ? `Spotřeba ${year}` : 'Spotřeba',
-          type: aggregationType === 'monthly' ? 'bar' : 'line',
-          data: consumptionData,
-          color: yearColor || CHART_PALETTE.consumption,
-          areaStyle: aggregationType !== 'monthly' ? { opacity: 0.1 } : undefined,
-          lineDashed: aggregationType !== 'monthly' ? dashed : undefined,
-        });
+        addBars(
+          'consumption',
+          'Spotřeba',
+          yearColor ?? CHART_PALETTE.consumption,
+          (d) => d.totalConsumption,
+          (split) => split.dayConsumption,
+          (split) => split.nightConsumption
+        );
       }
 
       if (showProduction) {
-        const productionData: Array<[string, number]> = aggData.map((d) => {
-          const dateKey = normalizeDate(d.startDate);
-          allDates.add(dateKey);
-          return [dateKey, d.totalProduction];
-        });
-        series.push({
-          name: isCompare ? `Výroba ${year}` : 'Výroba',
-          type: aggregationType === 'monthly' ? 'bar' : 'line',
-          data: productionData,
-          color: yearColor ? withAlpha(yearColor, 0.53) : CHART_PALETTE.production,
-          areaStyle: aggregationType !== 'monthly' ? { opacity: 0.1 } : undefined,
-          lineDashed: aggregationType !== 'monthly' ? dashed : undefined,
-        });
+        addBars(
+          'production',
+          'Výroba',
+          yearColor ? withAlpha(yearColor, 0.53) : CHART_PALETTE.production,
+          (d) => d.totalProduction,
+          (split) => split.dayProduction,
+          (split) => split.nightProduction,
+          false
+        );
       }
     }
   });
@@ -277,15 +292,17 @@ export function buildChartSeries({
 }
 
 /**
- * Compute night-time markArea pairs ([{xAxis: nightStart}, {xAxis: nightEnd}])
- * for a date range. Each pair represents the night band from the previous day's
- * sunset to the current day's sunrise. Returns [] if range > 400 days
- * (performance guard).
+ * Night bands for a date range: one pair per day, from the previous day's end
+ * of daylight to this day's start of daylight.
+ *
+ * Uses the same day window as the bar split, so a manual 06:00–20:00 setting
+ * bands the same hours the statistics count as night. Returns `[]` for ranges
+ * over 400 days, where a band per day would be unreadable anyway.
  */
-export function computeSunMarkAreas(
+export function computeNightMarkAreas(
   startDate: Date,
   endDate: Date,
-  location: LocationConfig
+  config: DayNightConfig
 ): Array<[{ xAxis: number }, { xAxis: number }]> {
   const areas: Array<[{ xAxis: number }, { xAxis: number }]> = [];
   const daysSpan = Math.ceil(
@@ -293,24 +310,20 @@ export function computeSunMarkAreas(
   );
   if (daysSpan > 400) return areas;
 
+  const resolved = resolveDayNightConfig(config);
   const cur = new Date(startDate);
   cur.setHours(0, 0, 0, 0);
+
   while (cur <= endDate) {
-    const sun = getSunTimes(cur, location);
-    // Night band: from previous sunset to today's sunrise
+    const today = getDayBounds(formatLocalDateKey(cur), resolved);
     const prevDay = new Date(cur);
     prevDay.setDate(prevDay.getDate() - 1);
-    const prevSun = getSunTimes(prevDay, location);
-    if (
-      prevSun.sunset instanceof Date &&
-      !Number.isNaN(prevSun.sunset.getTime()) &&
-      sun.sunrise instanceof Date &&
-      !Number.isNaN(sun.sunrise.getTime())
-    ) {
-      areas.push([
-        { xAxis: prevSun.sunset.getTime() },
-        { xAxis: sun.sunrise.getTime() },
-      ]);
+    const previous = getDayBounds(formatLocalDateKey(prevDay), resolved);
+
+    const from = previous.dayEnd.getTime();
+    const to = today.dayStart.getTime();
+    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
+      areas.push([{ xAxis: from }, { xAxis: to }]);
     }
     cur.setDate(cur.getDate() + 1);
   }
@@ -464,17 +477,19 @@ export function computeBrushDateRange(
 
 /**
  * Night-band `markArea` for the first series of a time-axis, single-year
- * chart, or `undefined` when there is nothing to show (overlay off, no
- * data, or the computed range has no night bands).
- *
- * Takes just the location (not the whole `DayNightConfig`) so callers can
- * depend on `dayNightConfig.location` alone — the mode/manual times do not
- * affect this overlay and should not trigger a recompute.
+ * chart, or `undefined` when there is nothing to show (toggle off, no data,
+ * or a range with no night bands).
  */
 export function buildNightMarkArea(
   chartData: BuiltChartSeries,
-  location: LocationConfig | undefined
-): { silent: true; itemStyle: { color: string }; data: ReturnType<typeof computeSunMarkAreas> } | undefined {
+  config: DayNightConfig
+):
+  | {
+      silent: true;
+      itemStyle: { color: string };
+      data: ReturnType<typeof computeNightMarkAreas>;
+    }
+  | undefined {
   const firstSeries = chartData.series[0];
   if (!firstSeries || firstSeries.data.length === 0) return undefined;
 
@@ -484,7 +499,7 @@ export function buildNightMarkArea(
   const maxT = typeof lastX === 'number' ? lastX : new Date(lastX as string).getTime();
   if (!Number.isFinite(minT) || !Number.isFinite(maxT)) return undefined;
 
-  const areas = computeSunMarkAreas(new Date(minT), new Date(maxT), location || getDefaultLocation());
+  const areas = computeNightMarkAreas(new Date(minT), new Date(maxT), config);
   if (areas.length === 0) return undefined;
 
   return {

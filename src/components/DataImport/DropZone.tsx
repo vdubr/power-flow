@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Box, Typography, Button, Stack, CircularProgress } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AddIcon from '@mui/icons-material/Add';
-import type { DataQuality } from '../../types/energy';
+import type { DataQuality, ImportSummary } from '../../types/energy';
 import SampleDataButton from './SampleDataButton';
 
 const HEADING_ID = 'data-import-dropzone-heading';
@@ -12,7 +12,7 @@ export interface DropZoneProps {
   /** Only offered before any data is loaded, same as before this was extracted. */
   showSampleDataButton: boolean;
   onFilesSelected: (files: File[]) => void | Promise<void>;
-  onSampleDataLoaded?: (quality: DataQuality) => void;
+  onSampleDataLoaded?: (quality: DataQuality, summary: ImportSummary) => void;
 }
 
 /**
@@ -43,10 +43,12 @@ const DropZone: React.FC<DropZoneProps> = ({
 
   const handleFileInputChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files;
-      if (!files || files.length === 0) return;
-      await onFilesSelected(Array.from(files));
+      const files = Array.from(event.target.files ?? []);
+      // Reset before awaiting: if parsing throws, the input would keep the old
+      // value and picking the same files again would fire no change event.
       event.target.value = '';
+      if (files.length === 0) return;
+      await onFilesSelected(files);
     },
     [onFilesSelected]
   );
@@ -82,9 +84,9 @@ const DropZone: React.FC<DropZoneProps> = ({
       dragCounter.current = 0;
       setIsDragging(false);
 
-      const droppedFiles = Array.from(event.dataTransfer.files).filter((f) =>
-        f.name.toLowerCase().endsWith('.csv')
-      );
+      // Everything is handed over, including non-CSV files: silently dropping
+      // them looked exactly like a broken app, so the importer reports them.
+      const droppedFiles = Array.from(event.dataTransfer.files);
       if (droppedFiles.length === 0) return;
       await onFilesSelected(droppedFiles);
     },

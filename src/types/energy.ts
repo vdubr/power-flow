@@ -12,6 +12,19 @@ export interface RawDataPoint {
   type: 'consumption' | 'production';
 }
 
+/**
+ * Energy of one period split by whether the sun was up.
+ *
+ * "Day" runs from sunrise to sunset for the configured location, or between the
+ * manual hours when that mode is chosen — see `createIsDayPredicate`.
+ */
+export interface DayNightSplit {
+  dayConsumption: number;
+  dayProduction: number;
+  nightConsumption: number;
+  nightProduction: number;
+}
+
 export interface AggregatedData {
   period: string;
   startDate: Date;
@@ -26,6 +39,8 @@ export interface AggregatedData {
   peakProductionTime: Date | null;
   selfConsumptionRatio: number; // Percentage of own consumption
   recordCount: number;
+  /** Present only when the aggregation was given a day/night predicate. */
+  dayNight?: DayNightSplit;
 }
 
 export interface YearlyData {
@@ -51,7 +66,14 @@ export interface YearStatistics {
 }
 
 // Aggregation types
-export type AggregationType = 'raw' | 'hourly' | 'dayNight' | 'daily' | 'weekly' | 'monthly';
+/**
+ * How records are bucketed on the chart's x-axis.
+ *
+ * Day/night is deliberately absent: it is a toggle (`ChartConfig.showDayNight`)
+ * that applies to whichever bucketing is active, so the user does not have to
+ * give up their view to see the split.
+ */
+export type AggregationType = 'raw' | 'hourly' | 'daily' | 'weekly' | 'monthly';
 
 /**
  * Which subset of the loaded data every panel works with.
@@ -62,12 +84,8 @@ export type AggregationType = 'raw' | 'hourly' | 'dayNight' | 'daily' | 'weekly'
  */
 export type RangeMode = 'years' | 'last' | 'selection';
 
-export interface DayNightData {
+export interface DayNightData extends DayNightSplit {
   date: Date;
-  dayConsumption: number;
-  dayProduction: number;
-  nightConsumption: number;
-  nightProduction: number;
 }
 
 // Battery simulation types
@@ -206,6 +224,23 @@ export interface DataQuality {
   rejectedRows: number; // rows dropped because the date or value could not be parsed
 }
 
+/**
+ * What one import changed, returned by `addData` so the UI can confirm it.
+ *
+ * Without this the user had no way to tell a successful import from a no-op:
+ * the panels kept showing the previously selected year.
+ */
+export interface ImportSummary {
+  /** Years the batch carried, ascending. */
+  years: number[];
+  /** Unique 15-minute intervals the batch contributed, after merging both files. */
+  recordCount: number;
+  /** Years that were not in the store before this batch. */
+  newYears: number[];
+  /** Whether the visible year selection changed because of this import. */
+  selectionChanged: boolean;
+}
+
 export interface CSVParseResult {
   success: boolean;
   data: RawDataPoint[];
@@ -225,5 +260,9 @@ export interface ChartConfig {
   showProduction: boolean;
   dayNightConfig: DayNightConfig;
   rangeMode: RangeMode;
-  showSunOverlay: boolean;
+  /**
+   * Split the chart by day and night. Bar views stack a day and a night
+   * segment per series; the time-axis views mark the night hours with bands.
+   */
+  showDayNight: boolean;
 }

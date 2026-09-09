@@ -30,7 +30,7 @@ const MainChart: React.FC = () => {
   const showConsumption = useEnergyStore((s) => s.chartConfig.showConsumption);
   const showProduction = useEnergyStore((s) => s.chartConfig.showProduction);
   const dayNightConfig = useEnergyStore((s) => s.chartConfig.dayNightConfig);
-  const showSunOverlay = useEnergyStore((s) => s.chartConfig.showSunOverlay);
+  const showDayNight = useEnergyStore((s) => s.chartConfig.showDayNight);
   const setTimeRange = useEnergyStore((s) => s.setTimeRange);
 
   const hasAnyData = yearlyData.size > 0;
@@ -45,8 +45,17 @@ const MainChart: React.FC = () => {
         showConsumption,
         showProduction,
         dayNightConfig,
+        showDayNight,
       }),
-    [yearlyData, selectedYears, aggregationType, showConsumption, showProduction, dayNightConfig]
+    [
+      yearlyData,
+      selectedYears,
+      aggregationType,
+      showConsumption,
+      showProduction,
+      dayNightConfig,
+      showDayNight,
+    ]
   );
 
   // Build chart options
@@ -158,37 +167,52 @@ const MainChart: React.FC = () => {
           formatter: (value: number) => formatAxisNumber(value),
         },
       },
-      series: chartData.series.map(s => ({
-        name: s.name,
-        type: s.type,
-        data: s.data,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: {
-          width: 2,
-          type: s.lineDashed ? ('dashed' as const) : ('solid' as const),
-        },
-        opacity: s.lineDashed ? 0.7 : 1,
-        itemStyle: {
-          color: s.color,
-        },
-        areaStyle: s.areaStyle,
-        stack: s.stack,
-        large: true,
-        largeThreshold: 1000,
-      })),
+      series: chartData.series.map(s =>
+        s.type === 'bar'
+          ? {
+              name: s.name,
+              type: 'bar' as const,
+              data: s.data,
+              stack: s.stack,
+              barMaxWidth: 28,
+              itemStyle: {
+                color: s.color,
+                // The theme rounds the top of a bar, which looks broken on a
+                // stack: the night half would float above a rounded day half.
+                // A split bar is drawn square, an undivided one keeps the theme.
+                ...(s.role ? { borderRadius: 0 } : {}),
+              },
+            }
+          : {
+              name: s.name,
+              type: 'line' as const,
+              data: s.data,
+              smooth: true,
+              symbol: 'none',
+              lineStyle: {
+                width: 2,
+                type: s.lineDashed ? ('dashed' as const) : ('solid' as const),
+              },
+              opacity: s.lineDashed ? 0.7 : 1,
+              itemStyle: { color: s.color },
+              areaStyle: s.areaStyle,
+              large: true,
+              largeThreshold: 1000,
+            }
+      ),
     };
 
-    // Sun overlay (markArea on first series), only for time-axis & single year
+    // On a time axis the toggle bands the night instead of splitting bars.
+    // One year only: overlaying two years of bands is unreadable.
     if (
-      showSunOverlay &&
+      showDayNight &&
       isTimeAxis &&
       selectedYears.length === 1 &&
       chartOptions.series &&
       Array.isArray(chartOptions.series) &&
       chartOptions.series[0]
     ) {
-      const markArea = buildNightMarkArea(chartData, dayNightConfig.location);
+      const markArea = buildNightMarkArea(chartData, dayNightConfig);
       if (markArea) {
         const firstSeriesOpt = chartOptions.series[0] as { markArea?: object };
         firstSeriesOpt.markArea = markArea;
@@ -202,8 +226,8 @@ const MainChart: React.FC = () => {
     aggregationType,
     selectedYears,
     theme.palette.text.secondary,
-    showSunOverlay,
-    dayNightConfig.location,
+    showDayNight,
+    dayNightConfig,
   ]);
 
   // Custom smooth wheel zoom anchored on cursor.

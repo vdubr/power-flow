@@ -31,3 +31,32 @@ export async function uploadYear(page: Page, year: number): Promise<void> {
 export async function waitForChart(page: Page): Promise<void> {
   await expect(page.locator('canvas').first()).toBeVisible({ timeout: 30_000 });
 }
+
+/**
+ * Drops real CSV bytes on a selector, the way a user drags files from Finder.
+ * Playwright cannot synthesise a DataTransfer from the Node side, so the files
+ * are rebuilt inside the page from base64.
+ */
+export async function dropYear(
+  page: Page,
+  year: number,
+  selector = 'body'
+): Promise<void> {
+  const files = (['spotreba', 'vyroba'] as const).map((kind) => {
+    const file = sampleFile(year, kind);
+    return { name: file.name, base64: file.buffer.toString('base64') };
+  });
+
+  const dataTransfer = await page.evaluateHandle((payload) => {
+    const dt = new DataTransfer();
+    for (const { name, base64 } of payload) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      dt.items.add(new File([bytes], name, { type: 'text/csv' }));
+    }
+    return dt;
+  }, files);
+
+  await page.dispatchEvent(selector, 'drop', { dataTransfer });
+}

@@ -24,7 +24,6 @@ import { formatCount } from '../../utils/format';
 const AGGREGATION_OPTIONS: Array<{ value: AggregationType; label: string; description: string }> = [
   { value: 'raw', label: '15min intervaly', description: `Surová data (omezeno na ${formatCount(MAX_RAW_CHART_POINTS)} bodů)` },
   { value: 'hourly', label: '1 hodina', description: 'Součet po hodinách' },
-  { value: 'dayNight', label: 'Den/Noc', description: 'Agregace podle denní/noční doby' },
   { value: 'daily', label: 'Denní', description: 'Součet za každý den' },
   { value: 'weekly', label: 'Týdenní', description: 'Součet za každý týden' },
   { value: 'monthly', label: 'Měsíční', description: 'Součet za každý měsíc' },
@@ -37,13 +36,13 @@ const ChartControls: React.FC = () => {
   const showConsumption = useEnergyStore((s) => s.chartConfig.showConsumption);
   const showProduction = useEnergyStore((s) => s.chartConfig.showProduction);
   const dayNightConfig = useEnergyStore((s) => s.chartConfig.dayNightConfig);
-  const showSunOverlay = useEnergyStore((s) => s.chartConfig.showSunOverlay);
+  const showDayNight = useEnergyStore((s) => s.chartConfig.showDayNight);
   const setAggregationType = useEnergyStore((s) => s.setAggregationType);
   const setSelectedYears = useEnergyStore((s) => s.setSelectedYears);
   const toggleConsumption = useEnergyStore((s) => s.toggleConsumption);
   const toggleProduction = useEnergyStore((s) => s.toggleProduction);
   const setDayNightConfig = useEnergyStore((s) => s.setDayNightConfig);
-  const setShowSunOverlay = useEnergyStore((s) => s.setShowSunOverlay);
+  const setShowDayNight = useEnergyStore((s) => s.setShowDayNight);
   
   const handleYearChange = (year: number) => {
     const newYears = selectedYears.includes(year)
@@ -109,42 +108,45 @@ const ChartControls: React.FC = () => {
           </Select>
         </FormControl>
 
-        {/* Sun overlay toggle */}
+        {/* Day/night toggle — applies to whichever aggregation is active */}
         <Box>
           <Typography variant="overline" className="micro-label" gutterBottom display="block">
-            Overlay
+            Den / noc
           </Typography>
           <FormControlLabel
             control={
               <Switch
-                checked={showSunOverlay}
-                onChange={(e) => setShowSunOverlay(e.target.checked)}
-                disabled={
-                  !hasData ||
-                  !isTimeAxisAggregation(aggregationType) ||
-                  selectedYears.length !== 1
-                }
+                checked={showDayNight}
+                onChange={(e) => setShowDayNight(e.target.checked)}
+                disabled={!hasData}
+                slotProps={{ input: { 'aria-label': 'Rozdělit na den a noc' } }}
               />
             }
-            label={<Typography variant="body2">Východ / západ slunce</Typography>}
+            label={<Typography variant="body2">Rozdělit na den a noc</Typography>}
           />
-          {showSunOverlay &&
-            !isTimeAxisAggregation(aggregationType) && (
+          {showDayNight && !isTimeAxisAggregation(aggregationType) && (
+            <Typography variant="caption" color="text.secondary" display="block">
+              Sloupce se dělí na denní a noční část
+            </Typography>
+          )}
+          {showDayNight &&
+            isTimeAxisAggregation(aggregationType) &&
+            selectedYears.length === 1 && (
               <Typography variant="caption" color="text.secondary" display="block">
-                Overlay je dostupný jen pro 15min a 1h zobrazení
+                Noční hodiny jsou v grafu vyznačené pásy
               </Typography>
             )}
-          {showSunOverlay &&
+          {showDayNight &&
             isTimeAxisAggregation(aggregationType) &&
-            selectedYears.length > 1 && (
+            selectedYears.length !== 1 && (
               <Typography variant="caption" color="text.secondary" display="block">
-                Overlay je dostupný jen při výběru jednoho roku
+                Pásy noci se kreslí jen při výběru jednoho roku
               </Typography>
             )}
         </Box>
         
         {/* Day/Night settings */}
-        {aggregationType === 'dayNight' && (
+        {showDayNight && (
           <Box sx={{ pl: 2, borderLeft: '3px solid', borderColor: 'primary.main' }}>
             <Typography variant="overline" className="micro-label" gutterBottom display="block">
               Nastavení Den/Noc

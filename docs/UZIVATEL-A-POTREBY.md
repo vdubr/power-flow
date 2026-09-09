@@ -2,7 +2,7 @@
 
 Specifikace toho, kdo aplikaci používá, jak se v ní chová a jaké otázky si přichází zodpovědět. Každá potřeba má přiřazený akceptační scénář (U1–U11), který je spustitelný v `src/__tests__/userScenarios.test.ts` nad reálnými exporty z `public/sample-data/`.
 
-Stav k 8. 9. 2026: 24 scénářů prochází, 5 je označeno `it.fails` a dokumentuje známé chyby z [REVIZE-A-PLAN.md](./REVIZE-A-PLAN.md).
+Stav k 9. 9. 2026: všech 37 scénářů prochází. Chování ověřené v prohlížeči pokrývá E2E sada v `e2e/` (12 scénářů × desktop i mobil).
 
 ## 0. Primární potřeba
 
@@ -63,34 +63,35 @@ Všechno ostatní (porovnání let, den/noc, TOP dny, výběr období) je podpů
 | ID | Otázka uživatele | Kde v aplikaci | Metrika / výpočet | Scénář |
 | --- | --- | --- | --- | --- |
 | U1 | Kolik jsem za rok odebral ze sítě a kolik do ní dodal? | Statistiky: Celková spotřeba, Celková výroba; tabulka porovnání let | `YearStatistics.totalConsumption`, `totalProduction` = součet kW × 0,25 | U1.0–U1.4 |
-| U2 | Kdy nejvíc odebírám? | Graf (denní, hodinová, den/noc), TOP 10 dnů, Špička spotřeby | `getTopConsumptionDays`, `aggregateByDayNight`, `peakConsumption` | U2.1–U2.3 |
+| U2 | Kdy nejvíc odebírám? | Graf (15min, hodinová, denní, týdenní, měsíční) + přepínač Den / noc, TOP 10 dnů, Špička spotřeby | `getTopConsumptionDays`, `createIsDayPredicate`, `peakConsumption` | U2.1–U2.5 |
 | U3 | Jak se to liší mezi roky? | Odznaky roků v importním pruhu, graf v režimu porovnání, tabulka porovnání | `yearlyData` per rok, normalizace na osu měsíc-den | U3.1–U3.3 |
 | U4 | Kolik přetoků by šlo uložit? | Baterie: Energie uložena do baterie, Snížení odběru ze sítě | `totalEnergyStored`, `gridImportReduction` | U4.1–U4.2 |
-| **U5** | **Jakou baterii a kolik ročně ušetřím?** (primární potřeba) | Baterie: Doporučená baterie, Roční úspora | `recommendedCapacity`, `annualSavings = gridImportReduction × cena` | U5.1–U5.4 |
+| **U5** | **Jakou baterii a kolik ročně ušetřím?** (primární potřeba) | Doporučená kapacita s křivkou úspor, Úspora za rok | `recommendCapacity` (koleno křivky), `savingsPerYear` | U5.1–U5.6 |
 | U6 | Kolik dní bych byl bez dokupu? | Baterie: Ostrovní dny, graf Denní dokup | `offGridDays`, `dailyGridImport[].isOffGrid` | U6.1–U6.2 |
 | U7 | Co kdyby (jiná kapacita, cena, rezerva)? | Sekce „Co kdyby“: slidery a pole | `setBatteryConfig` → nová simulace | U7.1–U7.2 |
 | U8 | Ve kterých měsících baterie pomůže? | Graf Měsíční analýza | `monthlyAnalysis` | U8.1–U8.2 |
-| U9 | Co se dělo v konkrétním období? | Výběr (brush) v grafu, přepínač Ø průměr / Poslední rok / Výseč v grafu | `setTimeRange`, `rangeMode = 'selection'`, `getActiveRecords` | U9.1–U9.2 |
-| U10 | Jak nahraná data spravuji? | Odznak roku (×), „Vymazat všechna data“, „Nahrát další“ | `removeYear`, `clearData`, `addData` | U10.1–U10.2 |
-| U11 | Co se stalo, když se soubor nenačetl? | Červený Alert u importu, seznam připravených souborů | `CSVParseResult.errors` | U11.1–U11.2 |
+| U9 | Co se dělo v konkrétním období? | Výběr (brush) v grafu, přepínač Vybrané roky / Poslední rok / Výseč v grafu | `setTimeRange`, `rangeMode = 'selection'`, `getActiveRecords` | U9.1–U9.2 |
+| U10 | Jak nahraná data spravuji? | Odznak roku (×), „Vymazat všechna data“, „Nahrát další“ | `removeYear`, `clearData`, `addData` | U10.1–U10.5 |
+| U11 | Co se stalo, když se soubor nenačetl? | Červený Alert u importu | `CSVParseResult.errors` | U11.1–U11.2 |
 
 ---
 
 ## 4. Chování v aplikaci (journey)
 
 1. **Příchod bez dat.** Vidí drop zónu, tlačítko „Vybrat soubory“, „Vyzkoušet s ukázkovými daty“ a návod ve třech krocích, jak data z ČEZ stáhnout. Očekává, že do minuty uvidí graf.
-2. **Import.** Přetáhne oba soubory najednou (nebo více let). Aplikace pozná typ souboru z hlavičky, řekne, kolik záznamů načetla a za jaký rok, a při chybě uvede číslo řádku. Při prvním importu se data načtou rovnou; při dalším importu uživatel vidí „připravené soubory“ a potvrdí „Načíst data do aplikace“.
-3. **Orientace.** Importní pruh se sbalí do jednoho řádku s odznaky roků (tečky: výroba/spotřeba k dispozici). Roční graf ukáže odběr a dodávku po dnech. Uživatel přepíná agregace, hledá špičky, zapíná overlay východ/západ slunce u 15min a hodinového zobrazení.
-4. **Statistiky.** Přečte KPI (spotřeba, výroba, špička, den/noc), TOP 10 dnů. Čísla očekává v českém formátu (mezera jako oddělovač tisíců, čárka jako desetinná).
-5. **Baterie.** Přečte doporučenou kapacitu, roční úsporu, ostrovní dny a zbytkový dokup. Posouvá slidery a sleduje, jak se čísla mění. Očekává plynulou odezvu a to, že „roční“ znamená za jeden rok i při více nahraných letech.
-6. **Porovnání.** Nahraje další rok. Klikne na odznak roku a zapne či vypne ho v grafu i statistikách. V grafu vidí roky přes sebe na stejné ose, v tabulce vedle sebe.
-7. **Detail.** Vybere úsek v grafu (brush). Statistiky se přepnou na „Výseč v grafu“ a ukáží jen vybraný úsek. Očekává, že totéž udělá i sekce baterie (dnes nedělá, viz nález S1).
-8. **Úklid.** Smaže rok křížkem na odznaku nebo vše tlačítkem „Vymazat všechna data“ a vrátí se do prázdného stavu.
+2. **Import.** Přetáhne oba soubory najednou (nebo více let), kamkoli na stránku, nebo je vybere tlačítkem. Aplikace pozná typ souboru z hlavičky, načte je rovnou a potvrdí, kolik záznamů a za jaký rok; při chybě uvede číslo řádku. Graf i statistiky se přepnou na nahraný rok.
+3. **Orientace.** Importní pruh se sbalí do jednoho řádku s odznaky roků (tečky: výroba/spotřeba k dispozici). Roční graf ukáže odběr a dodávku po dnech jako sloupce. Uživatel přepíná agregace a hledá špičky.
+4. **Den a noc.** Přepínač „Rozdělit na den a noc" platí pro kterékoli zobrazení: u sloupcových rozdělí spotřebu na denní a noční část v jednom sloupci, u 15minutového a hodinového vyznačí noční hodiny pásy. „Den" je od východu do západu slunce pro zvolenou lokalitu, alternativou je ruční okno hodin. Výroba se nerozděluje, protože po západu slunce do sítě nic nejde.
+5. **Statistiky.** Přečte KPI (spotřeba, výroba, špička, den/noc), TOP 10 dnů. Čísla očekává v českém formátu (mezera jako oddělovač tisíců, čárka jako desetinná).
+6. **Baterie.** Přečte doporučenou kapacitu, roční úsporu, ostrovní dny a zbytkový dokup. Posouvá slidery a sleduje, jak se čísla mění. Očekává plynulou odezvu a to, že „roční“ znamená za jeden rok i při více nahraných letech.
+7. **Porovnání.** Nahraje další rok, který se hned zobrazí. Kliknutím na odznak dřívějšího roku ho přidá do porovnání. V grafu vidí roky přes sebe na stejné ose, v tabulce vedle sebe.
+8. **Detail.** Vybere úsek v grafu (brush). Graf, statistiky i simulace baterie se přepnou na „Výseč v grafu“ a ukáží jen vybraný úsek.
+9. **Úklid.** Smaže rok křížkem na odznaku nebo vše tlačítkem „Vymazat všechna data“ a vrátí se do prázdného stavu.
 
 **Očekávání na důvěryhodnost**
 
 - Každé číslo má jednotku a je jasné, za jaké období platí (rok, výběr, všechny roky).
-- Pojmy odpovídají tomu, co se počítá. „Soběstačnost“ z bilančních dat spočítat nelze, aplikace musí použít název, který nezavádí (viz nález M2).
+- Pojmy odpovídají tomu, co se počítá. „Soběstačnost“ z bilančních dat spočítat nelze, proto se v UI jmenuje „Poměr dodávky k odběru“.
 - Součty v aplikaci se shodují se součtem v CSV. Ztráta jediného intervalu (např. při změně času) je pro uživatele chyba, protože si to může přepočítat v tabulkovém procesoru.
 - Prázdný interval nebo chybějící měření nesmí být tiše nula.
 
@@ -116,13 +117,15 @@ Formát Given / When / Then. Stav: ✅ prochází, ❌ známá chyba (kód nále
 | --- | --- | --- |
 | U2.1 | When si uživatel zobrazí TOP 10 dnů. Then je 10 položek seřazených sestupně a všechny patří do vybraného roku. | ✅ |
 | U2.2 | Then nejnáročnější den je v zimním půlroce (říjen–březen). | ✅ |
-| U2.3 | When přepne na agregaci den/noc (06:00–20:00). Then den + noc dává pro každý den stejný součet jako denní agregace. | ✅ |
+| U2.3 | When zapne přepínač Den / noc. Then den + noc dává stejný součet jako bez rozdělení, a to v denní, týdenní i měsíční agregaci. | ✅ |
+| U2.4 | Then bez rozdělení se den/noc vůbec nepočítá (žádná režie navíc). | ✅ |
+| U2.5 | Then v noci se do sítě nedodává téměř nic (méně než 5 % roční dodávky), což ověřuje orientaci výpočtu slunce. | ✅ |
 
 ### U3 Porovnání let
 
 | ID | Scénář | Stav |
 | --- | --- | --- |
-| U3.1 | Given nahraný 2022. When nahraje 2025. Then oba roky jsou k dispozici a původní výběr (2022) zůstává. | ✅ |
+| U3.1 | Given nahraný 2022. When nahraje 2025. Then oba roky jsou k dispozici a zobrazí se **nahraný** rok 2025; porovnání zapne kliknutím na odznak 2022. | ✅ |
 | U3.2 | Then každý rok má vlastní statistiky, které se liší. | ✅ |
 | U3.3 | Given export ve formátu `+A/… [kW]` s časy `HH:mm:ss` a řádky `24:00:00`. When se naparsuje. Then bez chyb a se všemi 35 040 řádky. | ❌ D1 (365 řádků/rok odmítnuto) |
 
@@ -184,7 +187,9 @@ Formát Given / When / Then. Stav: ✅ prochází, ❌ známá chyba (kód nále
 | U11.1 | Given soubor bez `+A`/`-A` v hlavičce. Then je odmítnut s českou hláškou, která říká, co má hlavička obsahovat. | ✅ |
 | U11.2 | Given soubor s jedním vadným řádkem. Then ostatní řádky se načtou a chyba uvádí číslo řádku. | ✅ |
 
-**Scénáře, které dnes nejsou automatizované** (patří do E2E ve fázi 4 plánu): drag & drop reálných souborů, sbalení a rozbalení importního pruhu, přepínání agregací v grafu, overlay slunce, brush myší, mazání roku křížkem na dotykovém zařízení, responzivita.
+**Pokryto E2E testy** (`e2e/`): cesta k doporučení kapacity (E1), oba formáty exportu (E2), zobrazení nahraného roku a porovnání (E3), aktivní rozsah přes celou stránku (E4), úklid dat (E5), použití doporučení (E6), dotykové mazání a šířka na mobilu (E6m), přístupnost bez vážných bariér (E7), přetažení souborů na stránku (E8), přepínač den/noc a pět agregací (E9).
+
+**Zbývá neautomatizované:** brush myší v grafu, přepínání lokality pro výpočet slunce.
 
 ---
 

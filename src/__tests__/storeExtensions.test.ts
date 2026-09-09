@@ -177,15 +177,23 @@ describe('energyStore extensions', () => {
     });
   });
 
-  describe('setShowSunOverlay', () => {
-    it('updates chartConfig.showSunOverlay', () => {
-      expect(useEnergyStore.getState().chartConfig.showSunOverlay).toBe(false);
+  describe('setShowDayNight', () => {
+    it('updates chartConfig.showDayNight', () => {
+      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(false);
 
-      useEnergyStore.getState().setShowSunOverlay(true);
-      expect(useEnergyStore.getState().chartConfig.showSunOverlay).toBe(true);
+      useEnergyStore.getState().setShowDayNight(true);
+      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(true);
 
-      useEnergyStore.getState().setShowSunOverlay(false);
-      expect(useEnergyStore.getState().chartConfig.showSunOverlay).toBe(false);
+      useEnergyStore.getState().setShowDayNight(false);
+      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(false);
+    });
+
+    it('defaults to sunrise-to-sunset for the default location', () => {
+      // "Day" means what it means outside the window, so the default is the
+      // sun, not clock hours.
+      const { dayNightConfig } = useEnergyStore.getState().chartConfig;
+      expect(dayNightConfig.mode).toBe('sun');
+      expect(dayNightConfig.location?.name).toBe('Praha');
     });
   });
 
@@ -368,8 +376,8 @@ describe('energyStore extensions', () => {
 
       const state = useEnergyStore.getState();
       expect(state.availableYears).toEqual([2022, 2023]);
-      // The buggy behavior selected [2023] (latest year), which only has 1 record.
-      // Fix: select the year with the most records, i.e. [2022].
+      // A single stray record is a fragment of an export, not a year the user
+      // imported: it stays below the batch share threshold and is not selected.
       expect(state.chartConfig.selectedYears).toEqual([2022]);
     });
 
@@ -386,26 +394,59 @@ describe('energyStore extensions', () => {
       expect(state.chartConfig.selectedYears).toEqual([2024]);
     });
 
-    it('preserves the user\u2019s existing selection on subsequent loads', () => {
-      // First load: 2022 (single year) → auto-selected.
+    it('shows the year that was just imported', () => {
+      // Keeping the previous selection made an import look like it had done
+      // nothing: the panels still showed the old year and the new one appeared
+      // only as a dimmed badge.
       const y2022 = buildRange('2022-01-01T00:00', '2022-12-31T23:00');
       useEnergyStore.getState().addData(y2022.consumption, y2022.production);
       expect(useEnergyStore.getState().chartConfig.selectedYears).toEqual([2022]);
 
-      // User narrows down: keep [2022] (no-op here, but simulates user intent).
-      useEnergyStore.getState().setSelectedYears([2022]);
-
-      // Second load: add 2024 with MORE records than 2022.
       const y2024 = buildRange('2024-01-01T00:00', '2024-12-31T23:00', 12);
-      useEnergyStore.getState().addData(y2024.consumption, y2024.production);
+      const summary = useEnergyStore.getState().addData(y2024.consumption, y2024.production);
 
       const state = useEnergyStore.getState();
       expect(state.availableYears).toEqual([2022, 2024]);
-      // Even though 2024 has more records, the existing user selection is kept.
-      expect(state.chartConfig.selectedYears).toEqual([2022]);
+      expect(state.chartConfig.selectedYears).toEqual([2024]);
+      expect(summary.years).toEqual([2024]);
+      expect(summary.newYears).toEqual([2024]);
+      expect(summary.selectionChanged).toBe(true);
+      expect(summary.recordCount).toBeGreaterThan(0);
+      // The earlier year is still one badge click away.
+      useEnergyStore.getState().setSelectedYears([2022, 2024]);
+      expect(useEnergyStore.getState().chartConfig.selectedYears).toEqual([2022, 2024]);
     });
 
-    it('falls back to the year with the most records when previous selection is no longer available', () => {
+    it('keeps the selection when the batch only adds a file for a selected year', () => {
+      const y2022 = buildRange('2022-01-01T00:00', '2022-12-31T23:00');
+      useEnergyStore.getState().addData(y2022.consumption, []);
+      expect(useEnergyStore.getState().chartConfig.selectedYears).toEqual([2022]);
+
+      // Second file of the same year: nothing new to show, so nothing moves.
+      const summary = useEnergyStore.getState().addData([], y2022.production);
+      expect(useEnergyStore.getState().chartConfig.selectedYears).toEqual([2022]);
+      expect(summary.selectionChanged).toBe(false);
+      expect(summary.newYears).toEqual([]);
+    });
+
+    it('clears a stale brush selection when the imported year takes over', () => {
+      const y2022 = buildRange('2022-01-01T00:00', '2022-12-31T23:00');
+      useEnergyStore.getState().addData(y2022.consumption, y2022.production);
+      useEnergyStore
+        .getState()
+        .setTimeRange({ start: new Date(2022, 5, 1), end: new Date(2022, 5, 30) });
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('selection');
+
+      const y2024 = buildRange('2024-01-01T00:00', '2024-12-31T23:00');
+      useEnergyStore.getState().addData(y2024.consumption, y2024.production);
+
+      // A range brushed in 2022 would leave every panel empty once 2024 is shown.
+      const state = useEnergyStore.getState();
+      expect(state.chartConfig.timeRange).toBeNull();
+      expect(state.chartConfig.rangeMode).toBe('years');
+    });
+
+    it('selects every year a multi-year batch carries', () => {
       // First load: 2022 only → selected = [2022].
       const y2022 = buildRange('2022-01-01T00:00', '2022-12-31T23:00');
       useEnergyStore.getState().addData(y2022.consumption, y2022.production);
@@ -421,8 +462,8 @@ describe('energyStore extensions', () => {
 
       const state = useEnergyStore.getState();
       expect(state.availableYears).toEqual([2023, 2024]);
-      // 2024 has more records (~730 vs ~365), so default = [2024].
-      expect(state.chartConfig.selectedYears).toEqual([2024]);
+      // Two real years in one batch is a comparison: show both.
+      expect(state.chartConfig.selectedYears).toEqual([2023, 2024]);
     });
   });
 });

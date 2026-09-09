@@ -4,7 +4,7 @@ import {
   buildChartSeries,
   buildAccessibleChartSummary,
   computeBrushDateRange,
-  computeSunMarkAreas,
+  computeNightMarkAreas,
 } from '../utils/chartSeriesBuilder';
 import { calculateYearStatistics, computeHasFlags } from '../utils/energyData';
 import {
@@ -65,7 +65,8 @@ function build(
   selectedYears: number[],
   aggregationType: AggregationType,
   showConsumption = true,
-  showProduction = true
+  showProduction = true,
+  showDayNight = false
 ) {
   return buildChartSeries({
     yearlyData,
@@ -74,6 +75,7 @@ function build(
     showConsumption,
     showProduction,
     dayNightConfig: dayNight,
+    showDayNight,
   });
 }
 
@@ -82,7 +84,7 @@ describe('chartSeriesBuilder', () => {
     it('is true only for the two aggregations plotted against real time', () => {
       expect(isTimeAxisAggregation('raw')).toBe(true);
       expect(isTimeAxisAggregation('hourly')).toBe(true);
-      for (const type of ['daily', 'weekly', 'monthly', 'dayNight'] as AggregationType[]) {
+      for (const type of ['daily', 'weekly', 'monthly'] as AggregationType[]) {
         expect(isTimeAxisAggregation(type)).toBe(false);
       }
     });
@@ -145,9 +147,9 @@ describe('chartSeriesBuilder', () => {
       for (const key of result.dates) {
         expect(key).toMatch(/^\d{2}-\d{2}$/);
       }
-      // The older year is drawn dashed so the two can be told apart.
-      expect(result.series[0].lineDashed).toBe(true);
-      expect(result.series[2].lineDashed).toBe(false);
+      // Bars cannot be dashed, so the years are told apart by colour only.
+      expect(result.series[0].lineDashed).toBeUndefined();
+      expect(result.series[0].color).not.toBe(result.series[2].color);
     });
 
     it('uses distinct colours per year when comparing', () => {
@@ -165,17 +167,84 @@ describe('chartSeriesBuilder', () => {
       }
     });
 
-    it('stacks day and night bars per year', () => {
-      const result = build(oneYear, [2022], 'dayNight')!;
+    it('splits consumption into day and night, and leaves production whole', () => {
+      const result = build(oneYear, [2022], 'daily', true, true, true)!;
+
+      // Production has no night half: panels export nothing after sunset, so
+      // the series would be a permanently empty legend entry.
+      expect(result.series.map((s) => s.name)).toEqual([
+        'Spotřeba – den',
+        'Spotřeba – noc',
+        'Výroba',
+      ]);
       expect(result.series.every((s) => s.type === 'bar')).toBe(true);
-      const stacks = new Set(result.series.map((s) => s.stack));
-      expect(stacks.has('consumption-2022')).toBe(true);
-      expect(stacks.has('production-2022')).toBe(true);
+
+      // Day is pushed first, so ECharts draws it at the bottom of the stack.
+      expect(result.series[0].role).toBe('day');
+      expect(result.series[1].role).toBe('night');
+      expect(result.series[0].stack).toBe('consumption-2022');
+      expect(result.series[1].stack).toBe('consumption-2022');
+      expect(result.series[2].stack).toBeUndefined();
+      expect(result.series[2].role).toBeUndefined();
+
+      // Night reuses the day colour at a lower opacity.
+      expect(result.series[1].color).not.toBe(result.series[0].color);
+      expect(result.series[1].color).toMatch(/^rgba\(/);
     });
 
-    it('draws monthly aggregation as bars, daily as lines', () => {
-      expect(build(oneYear, [2022], 'monthly')!.series[0].type).toBe('bar');
-      expect(build(oneYear, [2022], 'daily')!.series[0].type).toBe('line');
+    it('splitting keeps the same consumption totals as the undivided bars', () => {
+      const plain = build(oneYear, [2022], 'daily')!;
+      const split = build(oneYear, [2022], 'daily', true, true, true)!;
+
+      const plainConsumption = plain.series[0].data;
+      const day = split.series[0].data;
+      const night = split.series[1].data;
+
+      expect(day).toHaveLength(plainConsumption.length);
+      for (let i = 0; i < plainConsumption.length; i++) {
+        expect(day[i][0]).toBe(plainConsumption[i][0]);
+        expect(Number(day[i][1]) + Number(night[i][1])).toBeCloseTo(
+          Number(plainConsumption[i][1]),
+          6
+        );
+      }
+    });
+
+    it('gives each year its own consumption stack when comparing with the toggle on', () => {
+      const result = build(twoYears, [2022, 2023], 'daily', true, true, true)!;
+
+      // Per year: consumption day + night, production whole.
+      expect(result.series).toHaveLength(6);
+      expect(result.series.map((s) => s.name)).toEqual([
+        'Spotřeba 2022 – den',
+        'Spotřeba 2022 – noc',
+        'Výroba 2022',
+        'Spotřeba 2023 – den',
+        'Spotřeba 2023 – noc',
+        'Výroba 2023',
+      ]);
+      expect(new Set(result.series.map((s) => s.stack))).toEqual(
+        new Set(['consumption-2022', 'consumption-2023', undefined])
+      );
+      // Different years keep different colours even when split.
+      expect(result.series[0].color).not.toBe(result.series[3].color);
+    });
+
+    it('leaves bars undivided and unstacked when the toggle is off', () => {
+      const result = build(oneYear, [2022], 'daily')!;
+      expect(result.series).toHaveLength(2);
+      expect(result.series.every((s) => s.stack === undefined)).toBe(true);
+      expect(result.series.every((s) => s.role === undefined)).toBe(true);
+      expect(result.series.every((s) => s.areaStyle === undefined)).toBe(true);
+    });
+
+    it('draws every calendar aggregation as bars and the time axis as lines', () => {
+      for (const type of ['daily', 'weekly', 'monthly'] as AggregationType[]) {
+        expect(build(oneYear, [2022], type)!.series[0].type).toBe('bar');
+      }
+      for (const type of ['raw', 'hourly'] as AggregationType[]) {
+        expect(build(oneYear, [2022], type)!.series[0].type).toBe('line');
+      }
     });
   });
 
@@ -232,25 +301,34 @@ describe('chartSeriesBuilder', () => {
     });
   });
 
-  describe('computeSunMarkAreas', () => {
+  describe('computeNightMarkAreas', () => {
+    const sunConfig: DayNightConfig = {
+      mode: 'sun',
+      manualDayStart: '06:00',
+      manualDayEnd: '20:00',
+      location: getDefaultLocation(),
+    };
+
     it('produces one night band per day', () => {
-      const areas = computeSunMarkAreas(
-        new Date(2022, 5, 1),
-        new Date(2022, 5, 5),
-        getDefaultLocation()
-      );
+      const areas = computeNightMarkAreas(new Date(2022, 5, 1), new Date(2022, 5, 5), sunConfig);
       expect(areas.length).toBeGreaterThanOrEqual(4);
       for (const [from, to] of areas) {
         expect(from.xAxis).toBeLessThan(to.xAxis);
       }
     });
 
+    it('bands the manual window when that mode is chosen', () => {
+      // The band runs from 20:00 to 06:00 the next morning, so the same hours
+      // the statistics count as night.
+      const areas = computeNightMarkAreas(new Date(2022, 5, 2), new Date(2022, 5, 3), dayNight);
+      expect(areas.length).toBeGreaterThanOrEqual(1);
+      const [from, to] = areas[0];
+      expect(new Date(from.xAxis).getHours()).toBe(20);
+      expect(new Date(to.xAxis).getHours()).toBe(6);
+    });
+
     it('bails out on ranges too long to be worth drawing', () => {
-      const areas = computeSunMarkAreas(
-        new Date(2020, 0, 1),
-        new Date(2023, 0, 1),
-        getDefaultLocation()
-      );
+      const areas = computeNightMarkAreas(new Date(2020, 0, 1), new Date(2023, 0, 1), sunConfig);
       expect(areas).toEqual([]);
     });
   });

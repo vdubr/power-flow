@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadSampleData, uploadYear, waitForChart } from './helpers';
+import { dropYear, loadSampleData, uploadYear, waitForChart } from './helpers';
 
 /**
  * E1 – the whole point of the app: load data, see the balance, get a battery
@@ -50,23 +50,28 @@ for (const year of [2022, 2025]) {
 }
 
 /**
- * E3 – two years side by side.
- *
- * Once data is loaded, a further import is staged and has to be confirmed, so
- * an accidental drop cannot overwrite what the user is looking at.
+ * E3 – importing a second year shows it immediately, and comparison is one
+ * click away. Previously the import kept the old selection, so the panels did
+ * not change and the new year appeared only as a dimmed badge.
  */
-test('E3 porovnání dvou let', async ({ page }) => {
+test('E3 nahraný rok se zobrazí a porovnání je krok navíc', async ({ page }) => {
   await page.goto('/');
   await uploadYear(page, 2022);
   await waitForChart(page);
 
   await page.getByRole('button', { name: /Nahrát další/i }).click();
   await uploadYear(page, 2025);
-  await page.getByRole('button', { name: /Načíst data do aplikace/i }).click();
+
+  // No confirmation step: the import lands and says so.
+  await expect(page.getByRole('status')).toContainText(/Načteno .* za rok 2025/, {
+    timeout: 60_000,
+  });
 
   const badge2025 = page.getByRole('button', { name: '2025', exact: true }).first();
   await expect(badge2025).toBeVisible({ timeout: 60_000 });
-  await badge2025.click();
+
+  // Adding the earlier year back turns the chart into a comparison.
+  await page.getByRole('button', { name: '2022', exact: true }).first().click();
 
   // With two years selected the comparison table appears.
   await expect(page.getByRole('table', { name: /Porovnání let|porovnání/i }).first()).toBeVisible({
@@ -85,4 +90,24 @@ test('E5 odebrání roku a vymazání dat', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: /Přetáhněte sem CSV/i })).toBeVisible();
   await expect(page.locator('canvas')).toHaveCount(0);
+});
+
+/**
+ * E8 – a drop that lands outside the drop zone (or while the import bar is
+ * collapsed, when the zone is not even mounted) must import the files instead
+ * of letting the browser open the CSV and discard the loaded data.
+ */
+test('E8 přetažení na stránku načte rok a neodnaviguje', async ({ page }) => {
+  await page.goto('/');
+  await loadSampleData(page);
+  await waitForChart(page);
+
+  const urlBefore = page.url();
+  await dropYear(page, 2025, 'body');
+
+  await expect(page.getByRole('status')).toContainText(/Načteno .* za rok 2025/, {
+    timeout: 60_000,
+  });
+  expect(page.url()).toBe(urlBefore);
+  await expect(page.locator('canvas').first()).toBeVisible();
 });

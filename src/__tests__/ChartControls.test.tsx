@@ -183,21 +183,43 @@ describe('ChartControls', () => {
       expect(screen.getByText('2023')).toBeInTheDocument();
     });
 
-    it('Den/Noc settings section is NOT visible when aggregation is "daily"', () => {
+    it('Den/Noc settings section is hidden until the toggle is switched on', () => {
       seedStore();
       renderControls();
-      // Default aggregation is 'daily' – the day/night panel should be hidden
       expect(screen.queryByText('Nastavení Den/Noc')).not.toBeInTheDocument();
     });
 
-    it('Den/Noc settings section appears when aggregation is set to dayNight in the store before render', () => {
+    it('the day/night toggle reveals its settings and applies to any aggregation', () => {
       seedStore();
-      // Set the aggregation type BEFORE rendering so we get a clean single render
-      useEnergyStore.getState().setAggregationType('dayNight');
       renderControls();
 
-      // The section heading should be visible (queryAllByText to be safe, then assert length)
+      const toggle = screen.getByLabelText('Rozdělit na den a noc');
+      // The toggle is not tied to a particular aggregation any more: the default
+      // here is 'daily', where the old sun overlay switch was disabled.
+      expect(toggle).toBeEnabled();
+
+      fireEvent.click(toggle);
+
+      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(true);
       expect(screen.getAllByText('Nastavení Den/Noc').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('Sloupce se dělí na denní a noční část')).toBeInTheDocument();
+    });
+
+    it('the day/night toggle is disabled without data', () => {
+      renderControls();
+      expect(screen.getByLabelText('Rozdělit na den a noc')).toBeDisabled();
+    });
+
+    it('explains that night bands need a single year on the time axis', () => {
+      seedStore();
+      useEnergyStore.getState().setAggregationType('raw');
+      useEnergyStore.getState().setShowDayNight(true);
+      useEnergyStore.getState().setSelectedYears([2022, 2023]);
+      renderControls();
+
+      expect(
+        screen.getByText('Pásy noci se kreslí jen při výběru jednoho roku')
+      ).toBeInTheDocument();
     });
   });
 
@@ -215,22 +237,23 @@ describe('ChartControls', () => {
       expect(useEnergyStore.getState().chartConfig.aggregationType).toBe('monthly');
     });
 
-    it('all six aggregation options are present in the select', () => {
+    it('the five aggregation options are present in the select, without Den/Noc', () => {
       seedStore();
       const { baseElement } = renderControls();
 
-      // Open the MUI Select dropdown by clicking its combobox
-      const select = screen.getByRole('combobox');
+      // Day/night is a toggle now, so it must not be a view the user has to
+      // give up their aggregation for.
+      const select = screen.getByLabelText('Agregace');
       fireEvent.mouseDown(select);
 
       // MUI renders menu items in a portal; use baseElement and getAllByText since
       // the currently selected option text also appears in the trigger element.
       expect(within(baseElement).getAllByText('15min intervaly').length).toBeGreaterThanOrEqual(1);
       expect(within(baseElement).getAllByText('1 hodina').length).toBeGreaterThanOrEqual(1);
-      expect(within(baseElement).getAllByText('Den/Noc').length).toBeGreaterThanOrEqual(1);
       expect(within(baseElement).getAllByText('Denní').length).toBeGreaterThanOrEqual(1);
       expect(within(baseElement).getAllByText('Týdenní').length).toBeGreaterThanOrEqual(1);
       expect(within(baseElement).getAllByText('Měsíční').length).toBeGreaterThanOrEqual(1);
+      expect(within(baseElement).queryByText('Den/Noc')).not.toBeInTheDocument();
     });
   });
 });

@@ -15,6 +15,8 @@ prázdný stav ──► import ──► store ──► aktivní rozsah ──
      └── ukázková data
 ```
 
+Den a noc je **přepínač**, ne zobrazení: `ChartConfig.showDayNight` platí pro kteroukoli agregaci a rozhodnutí „byl den?" dělá jediná funkce `createIsDayPredicate` (`src/utils/dayNight.ts`), kterou volají agregace, noční pásy i statistiky.
+
 Jádrem je **aktivní rozsah**: jedno pravidlo (`selectActiveRecords` v `src/store/energyStore.ts`), které určuje, se kterými záznamy pracuje graf, statistiky i simulace baterie. Dřív si každý panel vybíral sám a po výběru v grafu ukazovaly tři různé podmnožiny.
 
 ---
@@ -45,9 +47,10 @@ soubor ──► parseCSVFile ──► decodeWindows1250 ──► parseCSV
                                           CSVParseResult
 ```
 
-- V **prázdném stavu** se úspěšné soubory rovnou uloží do storu; chyby se ukážou v `Alert`.
-- V **načteném stavu** jdou soubory nejdřív do seznamu „připravené soubory" (`StagedFilesList`) a uživatel je potvrdí tlačítkem.
+- Soubory se **vždy** uloží do storu rovnou, v prázdném i načteném stavu; potvrzovací krok sedával pod přehybem a výběr souborů kvůli tomu vypadal jako by nic neudělal.
+- Výsledek hlásí `Snackbar` s `role="status"` („Načteno 35 040 záznamů za rok 2025…"), chyby a odmítnuté soubory `Alert`.
 - Kvalitu dat (kolik intervalů nemá platné měření) zobrazuje `DataQualityNote`.
+- Přetažení kamkoli na stránku zachytí `useGlobalDropGuard`, takže drop mimo zónu neotevře CSV v prohlížeči a neztratí načtená data.
 
 Testy: `csvParser.test.ts`, scénáře U1.0, U3.3, U11.1, U11.2.
 
@@ -59,7 +62,9 @@ Testy: `csvParser.test.ts`, scénáře U1.0, U3.3, U11.1, U11.2.
 addData(consumptionData, productionData)
   ├─ mergeAndGroupByYear   kW/4 → kWh, duplicitní timestampy se SČÍTAJÍ
   ├─ slučování po polích   dávka přepíše jen tu stranu, kterou nese
-  ├─ výchozí selectedYears rok s nejvíce záznamy
+  ├─ selectedYears     roky nesené dávkou (≥ 5 % největšího roku dávky);
+  │                     jsou-li už vybrané, výběr se nemění; při změně
+  │                     se zahodí výseč v grafu
   └─ recompute(...)
 ```
 
@@ -98,7 +103,7 @@ Testy: scénáře U9.1, U9.2.
 
 | Pořadí | Komponenta | Co odpovídá uživateli | Scénáře |
 | --- | --- | --- | --- |
-| 1 | `Chart/MainChart` + `ChartControls` | Kolik odebírám a dodávám, kdy | U2 |
+| 1 | `Chart/MainChart` + `ChartControls` | Kolik odebírám a dodávám, kdy; přepínač Den / noc | U2 |
 | 2 | `Statistics/StatisticsPanel` + `TopConsumptionDays` | Souhrn a nejnáročnější dny | U1, U2 |
 | 3 | `Statistics/CapacityAdvisor` | **Jakou baterii koupit** | U5 |
 | 4 | `Statistics/BatteryAnalysis` + `Configuration/BatteryConfigForm` | Co kdyby, sezónnost, ostrovní dny | U4, U6, U7, U8 |
@@ -133,8 +138,11 @@ Scénáře, které nejdou ověřit jednotkovým testem, patří do Playwrightu (
 | --- | --- |
 | E1 | ukázková data → graf → statistiky → doporučení baterie |
 | E2 | upload reálných CSV obou formátů přes `setInputFiles` |
-| E3 | porovnání dvou let v grafu i v tabulce |
-| E4 | tažení výběru v grafu → všechny tři panely ukazují stejný rozsah |
+| E3 | nahraný rok se zobrazí bez potvrzování, porovnání je krok navíc |
+| E4 | přepnutí aktivního rozsahu platí pro celou stránku |
 | E5 | odebrání roku a „Vymazat všechna data" |
-| E6 | mobilní viewport 390 px, mazání roku na dotyk |
-| E7 | axe-core sken bez kritických nálezů |
+| E6 | použití doporučené kapacity v simulaci |
+| E6m | mobilní viewport, mazání roku na dotyk, žádný vodorovný scroll |
+| E7 | axe-core sken bez vážných nálezů |
+| E8 | přetažení souborů na stránku načte rok a neodnaviguje |
+| E9 | přepínač den/noc rozdělí spotřebu; agregace nabízí pět zobrazení |

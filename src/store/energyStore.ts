@@ -11,7 +11,7 @@ import {
   RawDataPoint,
   RangeMode,
 } from '../types/energy';
-import { CapacityRecommendation } from '../types/energy';
+import { CapacityRecommendation, ImportSummary } from '../types/energy';
 import { simulateBattery, recommendCapacity } from '../utils/batteryAlgorithm';
 import {
   DEFAULT_DAY_START,
@@ -20,6 +20,7 @@ import {
   DEFAULT_FEED_IN_PRICE,
 } from '../constants';
 import { mergeAndGroupByYear, calculateYearStatistics, computeHasFlags } from '../utils/energyData';
+import { getDefaultLocation } from '../utils/sunCalculations';
 import { filterByTimeRange } from '../utils/dataAggregation';
 
 interface EnergyStore {
@@ -41,7 +42,10 @@ interface EnergyStore {
   capacityCurveKey: string;
 
   // Actions
-  addData: (consumptionData: RawDataPoint[], productionData: RawDataPoint[]) => void;
+  addData: (
+    consumptionData: RawDataPoint[],
+    productionData: RawDataPoint[]
+  ) => ImportSummary;
   clearData: () => void;
   removeYear: (year: number) => void;
   setAggregationType: (type: AggregationType) => void;
@@ -52,7 +56,7 @@ interface EnergyStore {
   setDayNightConfig: (config: DayNightConfig) => void;
   setBatteryConfig: (config: Partial<BatteryConfig>) => void;
   setRangeMode: (mode: RangeMode) => void;
-  setShowSunOverlay: (show: boolean) => void;
+  setShowDayNight: (show: boolean) => void;
 
   // Selectors
   getActiveRecords: () => EnergyRecord[];
@@ -70,12 +74,15 @@ const createDefaultChartConfig = (): ChartConfig => ({
   showConsumption: true,
   showProduction: true,
   dayNightConfig: {
-    mode: 'manual',
+    // Sunrise to sunset is what "day" means to someone with panels on the roof;
+    // the manual window stays available as a setting.
+    mode: 'sun',
     manualDayStart: DEFAULT_DAY_START,
     manualDayEnd: DEFAULT_DAY_END,
+    location: getDefaultLocation(),
   },
   rangeMode: 'years',
-  showSunOverlay: false,
+  showDayNight: false,
 });
 
 const createDefaultBatteryConfig = (): BatteryConfig => ({
@@ -86,6 +93,26 @@ const createDefaultBatteryConfig = (): BatteryConfig => ({
   roundTripEfficiency: DEFAULT_ROUND_TRIP_EFFICIENCY,
   feedInPrice: DEFAULT_FEED_IN_PRICE,
 });
+
+/**
+ * A year counts as "carried" by an import when it holds at least this share of
+ * the batch's biggest year. It keeps a stray fragment — the single
+ * `1.1.YYYY 00:00` row older exports ended with — from hijacking the view,
+ * while a genuinely partial year (panels installed in November) still counts.
+ */
+const BATCH_YEAR_MIN_SHARE = 0.05;
+
+/** Years an import actually brought data for, ascending. */
+function carriedYears(yearMap: Map<number, EnergyRecord[]>): number[] {
+  let largest = 0;
+  for (const records of yearMap.values()) {
+    largest = Math.max(largest, records.length);
+  }
+  return Array.from(yearMap.entries())
+    .filter(([, records]) => records.length >= largest * BATCH_YEAR_MIN_SHARE)
+    .map(([year]) => year)
+    .sort((a, b) => a - b);
+}
 
 /**
  * The subset of the data every panel works with.
@@ -203,6 +230,7 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
 
   // Actions
   addData: (consumptionData: RawDataPoint[], productionData: RawDataPoint[]) => {
+    const previousYears = new Set(get().availableYears);
     const yearMap = mergeAndGroupByYear(consumptionData, productionData);
 
     // Which side did this batch actually carry? A batch with only the
@@ -274,33 +302,32 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
 
     const { batteryConfig, chartConfig: currentChartConfig } = get();
 
-    // Preserve user's selected years that are still available; if none were selected
-    // (first load), default to the year with the most records (most complete year).
-    // This avoids defaulting to a "timezone-bleed" year that contains only a handful
-    // of records (e.g. a single 1.1.YYYY 00:00 entry).
-    const preservedSelection = currentChartConfig.selectedYears.filter(y =>
+    // Show what was just imported. Keeping the previous selection meant an
+    // import could change nothing on screen — the new year appeared only as a
+    // dimmed badge — which read as "the files did not load".
+    const carried = carriedYears(yearMap);
+    const previousSelection = currentChartConfig.selectedYears.filter(y =>
       availableYears.includes(y)
     );
-    let defaultYear: number | null = null;
-    if (availableYears.length > 0) {
-      let maxCount = -1;
-      for (const year of availableYears) {
-        const count = newYearlyData.get(year)?.records.length ?? 0;
-        if (count > maxCount) {
-          maxCount = count;
-          defaultYear = year;
-        }
-      }
-    }
-    const newSelectedYears = preservedSelection.length > 0
-      ? preservedSelection
-      : defaultYear !== null
-        ? [defaultYear]
-        : [];
+    const alreadySelected =
+      carried.length > 0 && carried.every(y => previousSelection.includes(y));
+    const newSelectedYears =
+      carried.length === 0 || alreadySelected ? previousSelection : carried;
+
+    const selectionChanged =
+      newSelectedYears.length !== previousSelection.length ||
+      newSelectedYears.some(y => !previousSelection.includes(y));
 
     const chartConfig: ChartConfig = {
       ...currentChartConfig,
       selectedYears: newSelectedYears,
+      // A range brushed in the previous year would leave every panel empty
+      // once the selection moves to the imported year.
+      timeRange: selectionChanged ? null : currentChartConfig.timeRange,
+      rangeMode:
+        selectionChanged && currentChartConfig.rangeMode === 'selection'
+          ? 'years'
+          : currentChartConfig.rangeMode,
     };
 
     set({
@@ -310,6 +337,16 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       chartConfig,
       ...recompute(allRecords, availableYears, chartConfig, batteryConfig, get()),
     });
+
+    let recordCount = 0;
+    for (const records of yearMap.values()) recordCount += records.length;
+
+    return {
+      years: carried,
+      recordCount,
+      newYears: carried.filter(y => !previousYears.has(y)),
+      selectionChanged,
+    };
   },
 
   /**
@@ -486,11 +523,12 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
     });
   },
 
-  setShowSunOverlay: (show: boolean) => {
+  /** Purely a chart appearance switch — nothing derived depends on it. */
+  setShowDayNight: (show: boolean) => {
     set({
       chartConfig: {
         ...get().chartConfig,
-        showSunOverlay: show,
+        showDayNight: show,
       },
     });
   },

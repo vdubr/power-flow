@@ -6,37 +6,9 @@ import {
   DayNightConfig,
   LocationConfig,
 } from '../types/energy';
-import { isDaytimeManual, getSunTimes } from './sunCalculations';
+import { createIsDayPredicate, IsDayPredicate } from './dayNight';
 import { formatLocalDateKey, formatLocalMonthKey } from './dateUtils';
 import { MAX_RAW_CHART_POINTS } from '../constants';
-
-/**
- * Cache for sun times keyed by "YYYY-MM-DD|lat|lng".
- * Sunrise/sunset changes at most once per day per location, so we compute it
- * at most 365 times per year instead of once per 15-minute record (~35 000/year).
- */
-const sunTimesCache = new Map<string, { sunrise: Date; sunset: Date }>();
-
-function getCachedSunTimes(
-  dateKey: string,
-  location: LocationConfig
-): { sunrise: Date; sunset: Date } {
-  const cacheKey = `${dateKey}|${location.latitude}|${location.longitude}`;
-  let cached = sunTimesCache.get(cacheKey);
-  if (!cached) {
-    // Use noon of the local date as representative time for SunCalc
-    const [y, m, d] = dateKey.split('-').map(Number);
-    cached = getSunTimes(new Date(y, m - 1, d, 12, 0, 0), location);
-    sunTimesCache.set(cacheKey, cached);
-  }
-  return cached;
-}
-
-function isDaytimeCached(timestamp: Date, location: LocationConfig): boolean {
-  const dateKey = formatLocalDateKey(timestamp);
-  const { sunrise, sunset } = getCachedSunTimes(dateKey, location);
-  return timestamp >= sunrise && timestamp < sunset;
-}
 
 /**
  * Get the start of day for a date
@@ -133,7 +105,8 @@ function calculateAggregation(
   records: EnergyRecord[],
   period: string,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  isDay?: IsDayPredicate
 ): AggregatedData {
   let totalConsumption = 0;
   let totalProduction = 0;
@@ -141,7 +114,11 @@ function calculateAggregation(
   let peakProduction = 0;
   let peakConsumptionTime: Date | null = null;
   let peakProductionTime: Date | null = null;
-  
+  let dayConsumption = 0;
+  let dayProduction = 0;
+  let nightConsumption = 0;
+  let nightProduction = 0;
+
   for (const record of records) {
     totalConsumption += record.consumption;
     totalProduction += record.production;
@@ -154,6 +131,18 @@ function calculateAggregation(
     if (record.production > peakProduction) {
       peakProduction = record.production;
       peakProductionTime = record.timestamp;
+    }
+
+    // Splitting in this same loop keeps the day/night view free: no second
+    // pass over the ~35 000 records of a year.
+    if (isDay) {
+      if (isDay(record.timestamp)) {
+        dayConsumption += record.consumption;
+        dayProduction += record.production;
+      } else {
+        nightConsumption += record.consumption;
+        nightProduction += record.production;
+      }
     }
   }
   
@@ -179,13 +168,19 @@ function calculateAggregation(
     peakProductionTime,
     selfConsumptionRatio,
     recordCount: records.length,
+    dayNight: isDay
+      ? { dayConsumption, dayProduction, nightConsumption, nightProduction }
+      : undefined,
   };
 }
 
 /**
  * Aggregate records by day
  */
-export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
+export function aggregateByDay(
+  records: EnergyRecord[],
+  isDay?: IsDayPredicate
+): AggregatedData[] {
   const groups = groupByPeriod(
     records,
     (date) => formatLocalDateKey(date)
@@ -203,7 +198,8 @@ export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
       groupRecords,
       formatPeriod(start, end, 'daily'),
       start,
-      end
+      end,
+      isDay
     ));
   }
   
@@ -213,7 +209,10 @@ export function aggregateByDay(records: EnergyRecord[]): AggregatedData[] {
 /**
  * Aggregate records by hour
  */
-export function aggregateByHour(records: EnergyRecord[]): AggregatedData[] {
+export function aggregateByHour(
+  records: EnergyRecord[],
+  isDay?: IsDayPredicate
+): AggregatedData[] {
   const groups = groupByPeriod(
     records,
     (date) => formatLocalHourKey(date)
@@ -231,7 +230,8 @@ export function aggregateByHour(records: EnergyRecord[]): AggregatedData[] {
       groupRecords,
       formatPeriod(start, end, 'hourly'),
       start,
-      end
+      end,
+      isDay
     ));
   }
 
@@ -241,7 +241,10 @@ export function aggregateByHour(records: EnergyRecord[]): AggregatedData[] {
 /**
  * Aggregate records by week
  */
-export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
+export function aggregateByWeek(
+  records: EnergyRecord[],
+  isDay?: IsDayPredicate
+): AggregatedData[] {
   const groups = groupByPeriod(
     records,
     (date) => formatLocalDateKey(startOfWeek(date))
@@ -259,7 +262,8 @@ export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
       groupRecords,
       formatPeriod(start, end, 'weekly'),
       start,
-      end
+      end,
+      isDay
     ));
   }
   
@@ -269,7 +273,10 @@ export function aggregateByWeek(records: EnergyRecord[]): AggregatedData[] {
 /**
  * Aggregate records by month
  */
-export function aggregateByMonth(records: EnergyRecord[]): AggregatedData[] {
+export function aggregateByMonth(
+  records: EnergyRecord[],
+  isDay?: IsDayPredicate
+): AggregatedData[] {
   const groups = groupByPeriod(
     records,
     (date) => formatLocalMonthKey(date)
@@ -285,7 +292,8 @@ export function aggregateByMonth(records: EnergyRecord[]): AggregatedData[] {
       groupRecords,
       formatPeriod(start, end, 'monthly'),
       start,
-      end
+      end,
+      isDay
     ));
   }
   
@@ -293,61 +301,24 @@ export function aggregateByMonth(records: EnergyRecord[]): AggregatedData[] {
 }
 
 /**
- * Aggregate records by day/night
+ * Daily totals split into day and night, for the "ve dne / v noci" statistics.
+ *
+ * A thin wrapper over `aggregateByDay` so the split can never drift from the
+ * one the chart draws.
  */
 export function aggregateByDayNight(
   records: EnergyRecord[],
   config: DayNightConfig,
   location?: LocationConfig
 ): DayNightData[] {
-  // Group by date first
-  const dayGroups = groupByPeriod(
-    records,
-    (date) => formatLocalDateKey(date)
-  );
-  
-  const result: DayNightData[] = [];
-  
-  for (const [, dayRecords] of dayGroups) {
-    const date = startOfDay(dayRecords[0].timestamp);
-    
-    let dayConsumption = 0;
-    let dayProduction = 0;
-    let nightConsumption = 0;
-    let nightProduction = 0;
-    
-    for (const record of dayRecords) {
-      let isDay: boolean;
-      
-      if (config.mode === 'sun' && location) {
-        isDay = isDaytimeCached(record.timestamp, location);
-      } else {
-        isDay = isDaytimeManual(
-          record.timestamp,
-          config.manualDayStart,
-          config.manualDayEnd
-        );
-      }
-      
-      if (isDay) {
-        dayConsumption += record.consumption;
-        dayProduction += record.production;
-      } else {
-        nightConsumption += record.consumption;
-        nightProduction += record.production;
-      }
-    }
-    
-    result.push({
-      date,
-      dayConsumption,
-      dayProduction,
-      nightConsumption,
-      nightProduction,
-    });
-  }
-  
-  return result.sort((a, b) => a.date.getTime() - b.date.getTime());
+  const isDay = createIsDayPredicate(config, location);
+  return aggregateByDay(records, isDay).map((period) => ({
+    date: period.startDate,
+    dayConsumption: period.dayNight!.dayConsumption,
+    dayProduction: period.dayNight!.dayProduction,
+    nightConsumption: period.dayNight!.nightConsumption,
+    nightProduction: period.dayNight!.nightProduction,
+  }));
 }
 
 /**
