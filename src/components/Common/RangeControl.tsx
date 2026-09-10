@@ -13,11 +13,10 @@ const SCOPE_HELP =
   'Rozsah platí pro celou stránku – graf, statistiky i simulaci baterie čtou stejná data. ' +
   '„Vybrané roky“ sečte záznamy zaškrtnutých let (nic se nezprůměruje), ' +
   '„Poslední rok“ použije jen nejnovější z vybraných let a ' +
-  '„Výseč v grafu“ jen úsek vybraný tažením v hlavním grafu.';
+  '„Výseč v grafu“ jen úsek, na který je hlavní graf právě přiblížený.';
 
 const RangeControl: React.FC = () => {
   const rangeMode = useEnergyStore((s) => s.chartConfig.rangeMode);
-  const timeRange = useEnergyStore((s) => s.chartConfig.timeRange);
   const setRangeMode = useEnergyStore((s) => s.setRangeMode);
 
   const handleChange = (
@@ -70,7 +69,10 @@ const RangeControl: React.FC = () => {
         <ToggleButton value="last" color="primary">
           Poslední rok
         </ToggleButton>
-        <ToggleButton value="selection" color="primary" disabled={timeRange == null}>
+        {/* Always available: the zoom window is the selection, and without a
+            zoom it is simply the whole range. Disabling it used to hide the
+            option until the user found the brush tool. */}
+        <ToggleButton value="selection" color="primary">
           Výseč v grafu
         </ToggleButton>
       </ToggleButtonGroup>

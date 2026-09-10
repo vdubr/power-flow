@@ -46,6 +46,15 @@ export const CAPACITY_CURVE_STEP_KWH = 0.5;
 export const DAYS_PER_YEAR = 365;
 
 /**
+ * Years bundled in `public/sample-data/` and loaded by "Vyzkoušet s ukázkovými
+ * daty". Real ČEZ exports of one meter, ascending, deliberately covering every
+ * variant the portal produces: the `a+`/`a-` header (2022) and `+A/… [kW]`
+ * (2023–2025), timestamps without seconds (2022, 2023) and with them including
+ * `24:00:00` (2024, 2025), a decimal point (2022, 2023) and a comma (2024, 2025).
+ */
+export const SAMPLE_DATA_YEARS = [2022, 2023, 2024, 2025] as const;
+
+/**
  * Defaults for the physical parameters of a real battery.
  *
  * `ROUND_TRIP_EFFICIENCY` – share of the stored energy that comes back out;

@@ -1,4 +1,4 @@
-import { Page, expect } from '@playwright/test';
+import { Locator, Page, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -13,7 +13,7 @@ export function sampleFile(year: number, kind: 'spotreba' | 'vyroba') {
   };
 }
 
-/** Loads the bundled sample year through the button on the empty state. */
+/** Loads every bundled sample year (2022–2025) through the button on the empty state. */
 export async function loadSampleData(page: Page): Promise<void> {
   await page.getByRole('button', { name: /ukázkov/i }).click();
   await expect(page.getByText(/záznam/i).first()).toBeVisible({ timeout: 30_000 });
@@ -59,4 +59,34 @@ export async function dropYear(
   }, files);
 
   await page.dispatchEvent(selector, 'drop', { dataTransfer });
+}
+
+/**
+ * Hovers a point of the chart until ECharts answers with a tooltip.
+ *
+ * A single mouse move can land while the canvas is still being rebuilt, when
+ * zrender has not attached its handlers yet and the move is simply dropped.
+ * Retrying the hover is deterministic, where waiting a fixed time is a guess.
+ */
+export async function hoverChartTooltip(page: Page, x: number, y: number): Promise<Locator> {
+  // ECharts renders the tooltip as an absolutely positioned div; the average
+  // row is the only text unique to it.
+  const tooltip = page
+    .locator('div[style*="position: absolute"]')
+    .filter({ hasText: /Ø/ })
+    .first();
+
+  await expect
+    .poll(
+      async () => {
+        // Two moves: the pointer may already be sitting at the target.
+        await page.mouse.move(x - 60, y);
+        await page.mouse.move(x, y);
+        return tooltip.count();
+      },
+      { timeout: 20_000, intervals: [200, 400, 700, 1000] }
+    )
+    .toBeGreaterThan(0);
+
+  return tooltip;
 }

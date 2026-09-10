@@ -141,6 +141,30 @@ export function formatMonthYear(month: number, year: number): string {
   return `${MONTH_NAMES[month - 1] ?? month} ${year}`;
 }
 
+/** Month name alone: `Červen`. `month` is 1-based. */
+export function formatMonthName(month: number): string {
+  return MONTH_NAMES[month - 1] ?? String(month);
+}
+
+/** Week of the year: `27. týden`. */
+export function formatWeekName(week: number): string {
+  return `${formatCount(week)}. týden`;
+}
+
+/**
+ * Difference from a reference value: `+8,2 %`, `−6,0 %`, `0,0 %`.
+ *
+ * Uses the typographic minus (U+2212), not a hyphen, so a negative share does
+ * not read like a bullet point at small sizes.
+ */
+export function formatSignedPercent(value: number): string {
+  if (!Number.isFinite(value)) return '–';
+  const rounded = Number(formatNumber(Math.abs(value), 1).replace(',', '.'));
+  if (rounded === 0) return formatPercent(0);
+  const sign = value > 0 ? '+' : '−';
+  return `${sign}${formatPercent(Math.abs(value))}`;
+}
+
 /** Czech plural for a count of days: 1 den, 2 dny, 5 dnů. */
 export function formatDays(count: number): string {
   const rounded = Math.round(count);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatLocalDateKey, formatLocalMonthKey, parseLocalDateKey } from '../utils/dateUtils';
+import { formatLocalDateKey, formatLocalMonthKey, isoWeek, parseLocalDateKey } from '../utils/dateUtils';
 
 describe('dateUtils', () => {
   describe('formatLocalDateKey', () => {
@@ -98,6 +98,50 @@ describe('dateUtils', () => {
         expect(roundTripped.getMonth()).toBe(original.getMonth());
         expect(roundTripped.getDate()).toBe(original.getDate());
       }
+    });
+  });
+
+  describe('isoWeek', () => {
+    it('numbers weeks from the one holding the first Thursday', () => {
+      // 4. 1. is always in week 1 by ISO rules.
+      expect(isoWeek(new Date(2024, 0, 4))).toEqual({ year: 2024, week: 1 });
+      expect(isoWeek(new Date(2024, 0, 8))).toEqual({ year: 2024, week: 2 });
+      expect(isoWeek(new Date(2024, 11, 30))).toEqual({ year: 2025, week: 1 });
+    });
+
+    /**
+     * The reason the year comes back with the number: the same week can be fed
+     * by two calendar years, and grouping it by the calendar year would split
+     * one week into two rows of the cross-year comparison.
+     */
+    it('puts the first days of January into the previous year’s last week', () => {
+      // 1. 1. 2023 was a Sunday, so it closes ISO week 52 of 2022.
+      expect(isoWeek(new Date(2023, 0, 1))).toEqual({ year: 2022, week: 52 });
+      // 2. 1. 2023 was the Monday that opens week 1.
+      expect(isoWeek(new Date(2023, 0, 2))).toEqual({ year: 2023, week: 1 });
+    });
+
+    it('gives every day of one week the same number', () => {
+      const monday = new Date(2022, 6, 4);
+      for (let i = 0; i < 7; i++) {
+        const day = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+        expect(isoWeek(day)).toEqual({ year: 2022, week: 27 });
+      }
+      const nextMonday = new Date(2022, 6, 11);
+      expect(isoWeek(nextMonday).week).toBe(28);
+    });
+
+    it('survives the daylight-saving weeks, where a week is 167 or 169 hours', () => {
+      // Spring forward 26. 3. 2023, fall back 29. 10. 2023.
+      expect(isoWeek(new Date(2023, 2, 26, 12))).toEqual({ year: 2023, week: 12 });
+      expect(isoWeek(new Date(2023, 2, 27, 12))).toEqual({ year: 2023, week: 13 });
+      expect(isoWeek(new Date(2023, 9, 29, 12))).toEqual({ year: 2023, week: 43 });
+      expect(isoWeek(new Date(2023, 9, 30, 12))).toEqual({ year: 2023, week: 44 });
+    });
+
+    it('reaches week 53 in years that have one', () => {
+      // 2020 was a 53-week ISO year.
+      expect(isoWeek(new Date(2020, 11, 31))).toEqual({ year: 2020, week: 53 });
     });
   });
 });

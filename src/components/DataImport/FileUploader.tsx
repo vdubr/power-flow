@@ -4,7 +4,6 @@ import {
   Paper,
   Typography,
   Button,
-  Chip,
   Stack,
   Collapse,
   List,
@@ -19,16 +18,15 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { useEnergyStore } from '../../store/energyStore';
 import { DataQuality, ImportSummary } from '../../types/energy';
-import { getDefaultLocation } from '../../utils/sunCalculations';
 import { formatCount } from '../../utils/format';
 import DropZone from './DropZone';
 import { parseFileToStagedFile, sumCommittedQuality } from './parsedFile';
 import { describeImport } from './importSummaryText';
 import { useGlobalDropGuard } from '../../hooks/useGlobalDropGuard';
 import YearBadge from './YearBadge';
+import LocationChip from './LocationChip';
 import DataQualityNote, { emptyQuality, mergeQuality } from './DataQualityNote';
 
 /** ČEZ exports are .csv; some browsers report the MIME type instead. */
@@ -41,14 +39,12 @@ const FileUploader: React.FC = () => {
   const yearlyData = useEnergyStore((s) => s.yearlyData);
   const totalRecords = useEnergyStore((s) => s.allRecords.length);
   const selectedYears = useEnergyStore((s) => s.chartConfig.selectedYears);
-  const location = useEnergyStore((s) => s.chartConfig.dayNightConfig.location);
   const addData = useEnergyStore((s) => s.addData);
   const clearData = useEnergyStore((s) => s.clearData);
   const removeYear = useEnergyStore((s) => s.removeYear);
   const setSelectedYears = useEnergyStore((s) => s.setSelectedYears);
 
   const hasLoadedData = availableYears.length > 0;
-  const locationName = location?.name ?? getDefaultLocation().name;
 
   const [expanded, setExpanded] = useState<boolean>(!hasLoadedData);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -248,12 +244,7 @@ const FileUploader: React.FC = () => {
               </Typography>
             </Stack>
           )}
-          <Chip
-            icon={<LocationOnIcon fontSize="small" />}
-            label={locationName}
-            variant="outlined"
-            size="small"
-          />
+          <LocationChip />
           <Box sx={{ flex: 1 }} />
           <Button
             startIcon={<AddIcon />}

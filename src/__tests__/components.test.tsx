@@ -73,10 +73,16 @@ describe('RangeControl', () => {
     expect(screen.getByRole('button', { name: 'Výseč v grafu' })).toBeInTheDocument();
   });
 
-  it('disables "Výseč v grafu" when timeRange is null', () => {
+  /**
+   * „Výseč v grafu“ bývala vypnutá, dokud si uživatel nevybral rozsah štětcem —
+   * jenže výseč je dnes okno, na které je graf přiblížený, a bez přiblížení je
+   * to prostě celý rozsah. Vypnuté tlačítko tu možnost jen schovávalo, dokud
+   * uživatel nenašel štětec, který už v grafu ani není.
+   */
+  it('nabízí „Výseč v grafu“ i bez vybraného rozsahu', () => {
     render(<RangeControl />);
     const selection = screen.getByRole('button', { name: 'Výseč v grafu' });
-    expect(selection).toBeDisabled();
+    expect(selection).not.toBeDisabled();
   });
 
   it('enables "Výseč v grafu" when timeRange is set', () => {

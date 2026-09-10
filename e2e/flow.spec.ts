@@ -14,6 +14,15 @@ test('E1 ukázková data vedou až k doporučení kapacity', async ({ page }) =>
   await loadSampleData(page);
   await waitForChart(page);
 
+  // Ukázková data přinesou celou přibalenou sadu, takže uživatel bez vlastního
+  // exportu vidí i porovnání let.
+  for (const year of [2022, 2023, 2024, 2025]) {
+    await expect(
+      page.getByRole('button', { name: String(year), exact: true }).first()
+    ).toBeVisible({ timeout: 60_000 });
+  }
+  await expect(page.getByRole('table', { name: /Porovnání/i }).first()).toBeVisible();
+
   // The balance is on screen.
   await expect(page.getByRole('heading', { name: /Graf spotřeby a výroby/i })).toBeVisible();
   await expect(page.getByText('Celková spotřeba')).toBeVisible();

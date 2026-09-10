@@ -60,7 +60,13 @@ const YearComparisonTable: React.FC = () => {
   return (
     <Box>
       <SectionHeader title="Porovnání let" variant="section" />
-      <TableContainer>
+      {/*
+        Six columns do not fit a phone, so the container scrolls sideways. A
+        scrollable region with no focusable content inside is unreachable from
+        the keyboard — the last columns simply cannot be read — so the region
+        itself takes focus and says what it is.
+      */}
+      <TableContainer tabIndex={0} role="region" aria-label="Porovnání let, vodorovně posuvná tabulka">
         <Table size="small">
           <caption style={srOnlySx as React.CSSProperties}>
             Porovnání spotřeby, výroby a poměru dodávky k odběru mezi vybranými roky

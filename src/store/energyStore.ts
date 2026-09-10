@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import {
+  ChartMode,
+  ConsumptionSplit,
   EnergyRecord,
   YearlyData,
   ChartConfig,
@@ -41,6 +43,15 @@ interface EnergyStore {
   /** Identity of the inputs the curve was built from; internal memoisation. */
   capacityCurveKey: string;
 
+  /**
+   * Series the user is pointing at in the filter under the chart, by name.
+   *
+   * Deliberately outside `chartConfig`: every change there recomputes the
+   * battery simulation and the capacity curve, and a mouse moving across four
+   * year chips must not trigger that.
+   */
+  highlightedSeries: string[];
+
   // Actions
   addData: (
     consumptionData: RawDataPoint[],
@@ -53,10 +64,15 @@ interface EnergyStore {
   setTimeRange: (range: TimeRange | null) => void;
   toggleConsumption: () => void;
   toggleProduction: () => void;
+  toggleSeriesVisibility: (name: string) => void;
+  setConsumptionSplit: (split: ConsumptionSplit) => void;
+  setChartMode: (mode: ChartMode) => void;
+  setConsumptionBelowAxis: (below: boolean) => void;
+  setHighlightedSeries: (names: string[]) => void;
+  setZoomRange: (range: TimeRange | null) => void;
   setDayNightConfig: (config: DayNightConfig) => void;
   setBatteryConfig: (config: Partial<BatteryConfig>) => void;
   setRangeMode: (mode: RangeMode) => void;
-  setShowDayNight: (show: boolean) => void;
 
   // Selectors
   getActiveRecords: () => EnergyRecord[];
@@ -82,7 +98,12 @@ const createDefaultChartConfig = (): ChartConfig => ({
     location: getDefaultLocation(),
   },
   rangeMode: 'years',
-  showDayNight: false,
+  consumptionSplit: 'sum',
+  chartMode: 'balance',
+  // Off by default: both sides upright is the plain reading of the data, and
+  // mirroring one of them is a deliberate way of looking at it.
+  consumptionBelowAxis: false,
+  hiddenSeries: [],
 });
 
 const createDefaultBatteryConfig = (): BatteryConfig => ({
@@ -227,6 +248,7 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
   batterySimulation: null,
   capacityRecommendation: null,
   capacityCurveKey: '',
+  highlightedSeries: [],
 
   // Actions
   addData: (consumptionData: RawDataPoint[], productionData: RawDataPoint[]) => {
@@ -318,9 +340,17 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       newSelectedYears.length !== previousSelection.length ||
       newSelectedYears.some(y => !previousSelection.includes(y));
 
+    // An import carrying several years lands in the comparison view, where a
+    // daily bar per year is a wall of noise — four years is 1 460 bars over
+    // 365 categories. Monthly is the granularity at which a multi-year chart
+    // can actually be read; the user can switch back at any time. Only on a
+    // changed selection, so a re-import does not undo their own choice.
+    const switchToMonthly = selectionChanged && newSelectedYears.length > 1;
+
     const chartConfig: ChartConfig = {
       ...currentChartConfig,
       selectedYears: newSelectedYears,
+      aggregationType: switchToMonthly ? 'monthly' : currentChartConfig.aggregationType,
       // A range brushed in the previous year would leave every panel empty
       // once the selection moves to the imported year.
       timeRange: selectionChanged ? null : currentChartConfig.timeRange,
@@ -328,6 +358,9 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
         selectionChanged && currentChartConfig.rangeMode === 'selection'
           ? 'years'
           : currentChartConfig.rangeMode,
+      // Series names change with the imported years, and a name left over from
+      // the previous set would silently hide a freshly imported year.
+      hiddenSeries: selectionChanged ? [] : currentChartConfig.hiddenSeries,
     };
 
     set({
@@ -364,6 +397,7 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       batterySimulation: null,
       capacityRecommendation: null,
       capacityCurveKey: '',
+      highlightedSeries: [],
     });
   },
 
@@ -431,6 +465,25 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
       chartConfig: {
         ...get().chartConfig,
         showProduction: !get().chartConfig.showProduction,
+      },
+    });
+  },
+
+  /**
+   * Shows or hides a single series from the filter under the chart.
+   *
+   * Hiding is purely visual: the series stays in the active range, so the
+   * statistics and the battery simulation are unaffected — the filter answers
+   * "which lines do I want to look at", not "which data counts".
+   */
+  toggleSeriesVisibility: (name: string) => {
+    const { hiddenSeries } = get().chartConfig;
+    set({
+      chartConfig: {
+        ...get().chartConfig,
+        hiddenSeries: hiddenSeries.includes(name)
+          ? hiddenSeries.filter((n) => n !== name)
+          : [...hiddenSeries, name],
       },
     });
   },
@@ -524,12 +577,89 @@ export const useEnergyStore = create<EnergyStore>((set, get) => ({
   },
 
   /** Purely a chart appearance switch — nothing derived depends on it. */
-  setShowDayNight: (show: boolean) => {
+  /**
+   * Which half of the day the chart counts. `sum` and `both` draw the same
+   * bars — `both` only adds the breakdown to the tooltip — while `day` and
+   * `night` cut the data down.
+   *
+   * A view setting, like `hiddenSeries`: it clips the chart and its tooltip,
+   * not the active range. The statistics and the battery simulation keep
+   * reading whole days, and the "ve dne / v noci" tiles keep showing both
+   * halves, so no number silently changes meaning under the user.
+   */
+  setConsumptionSplit: (split: ConsumptionSplit) => {
     set({
       chartConfig: {
         ...get().chartConfig,
-        showDayNight: show,
+        consumptionSplit: split,
       },
+    });
+  },
+
+  setChartMode: (mode: ChartMode) => {
+    set({
+      chartConfig: {
+        ...get().chartConfig,
+        chartMode: mode,
+      },
+    });
+  },
+
+  /**
+   * Whether what was bought is drawn below the zero line.
+   *
+   * Only the direction of the drawing: the series carry `plotSign`, so every
+   * number the user reads comes out the same either way.
+   */
+  setConsumptionBelowAxis: (below: boolean) => {
+    set({
+      chartConfig: {
+        ...get().chartConfig,
+        consumptionBelowAxis: below,
+      },
+    });
+  },
+
+  /**
+   * Pointing at a chip in the filter highlights its series in the chart.
+   *
+   * Sets store state outside `chartConfig`, so a mouse crossing the chips does
+   * not drag the battery simulation through a recompute on every pixel.
+   */
+  setHighlightedSeries: (names: string[]) => {
+    set({ highlightedSeries: names });
+  },
+
+  /**
+   * The range the chart is currently zoomed to.
+   *
+   * Unlike `setTimeRange` this does not switch `rangeMode`: zooming is how the
+   * user reads the chart, not a decision that the statistics and the battery
+   * simulation should follow. The range is kept ready so that switching to
+   * "Výseč v grafu" applies exactly what is on screen.
+   */
+  setZoomRange: (range: TimeRange | null) => {
+    const { chartConfig } = get();
+    const current = chartConfig.timeRange;
+    const same =
+      (current === null && range === null) ||
+      (current !== null &&
+        range !== null &&
+        current.start.getTime() === range.start.getTime() &&
+        current.end.getTime() === range.end.getTime());
+    if (same) return;
+
+    const nextConfig: ChartConfig = { ...chartConfig, timeRange: range };
+    // Only worth recomputing while the panels are actually following the
+    // selection; otherwise the new range just sits there until they do.
+    if (chartConfig.rangeMode !== 'selection') {
+      set({ chartConfig: nextConfig });
+      return;
+    }
+    const { allRecords, availableYears, batteryConfig } = get();
+    set({
+      chartConfig: nextConfig,
+      ...recompute(allRecords, availableYears, nextConfig, batteryConfig, get()),
     });
   },
 

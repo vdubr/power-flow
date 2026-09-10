@@ -3,7 +3,7 @@ import theme from './theme';
 import { useEnergyStore } from './store/energyStore';
 import { MainLayout } from './components/Layout';
 import { FileUploader, CezGuide } from './components/DataImport';
-import { MainChart, ChartControls } from './components/Chart';
+import { MainChart } from './components/Chart';
 import { StatisticsPanel, BatteryAnalysis, YearComparisonTable } from './components/Statistics';
 
 function App() {
@@ -23,7 +23,6 @@ function App() {
             {hasData ? (
               <>
                 <MainChart />
-                <ChartControls />
                 <StatisticsPanel />
                 <BatteryAnalysis />
                 {selectedYears.length > 1 && (

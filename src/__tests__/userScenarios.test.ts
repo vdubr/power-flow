@@ -20,8 +20,15 @@ import {
   getTopConsumptionDays,
 } from '../utils/dataAggregation';
 import { createIsDayPredicate } from '../utils/dayNight';
+import {
+  buildChartSeries,
+  buildUnitComparison,
+  BuildChartSeriesParams,
+  ChartSeriesDef,
+} from '../utils/chartSeriesBuilder';
 import { simulateBattery } from '../utils/batteryAlgorithm';
-import { AggregatedData, BatteryConfig, CSVParseResult } from '../types/energy';
+import { AggregatedData, BatteryConfig, CSVParseResult, ImportSummary } from '../types/energy';
+import { SAMPLE_DATA_YEARS } from '../constants';
 
 // ---------------------------------------------------------------------------
 // Pomocné funkce – načtení reálných ukázkových dat
@@ -56,15 +63,28 @@ function rawKwhSum(year: number, kind: Kind): number {
   return sumKw / 4;
 }
 
-// Parsujeme jen jednou pro celý soubor testů (35k řádků × 4 soubory).
-const sample2022 = {
-  consumption: parseSample(2022, 'spotreba'),
-  production: parseSample(2022, 'vyroba'),
-};
-const sample2025 = {
-  consumption: parseSample(2025, 'spotreba'),
-  production: parseSample(2025, 'vyroba'),
-};
+interface Sample {
+  consumption: CSVParseResult;
+  production: CSVParseResult;
+}
+
+// Parsujeme jen jednou pro celý soubor testů (35k řádků na soubor).
+const sampleCache = new Map<number, Sample>();
+
+function sampleYear(year: number): Sample {
+  let sample = sampleCache.get(year);
+  if (!sample) {
+    sample = {
+      consumption: parseSample(year, 'spotreba'),
+      production: parseSample(year, 'vyroba'),
+    };
+    sampleCache.set(year, sample);
+  }
+  return sample;
+}
+
+const sample2022 = sampleYear(2022);
+const sample2025 = sampleYear(2025);
 
 const DEFAULT_BATTERY: BatteryConfig = {
   capacity: 10,
@@ -75,12 +95,42 @@ const DEFAULT_BATTERY: BatteryConfig = {
   feedInPrice: 1.5,
 };
 
-function loadYear(sample: typeof sample2022) {
+function loadYear(sample: Sample) {
   useEnergyStore.getState().addData(sample.consumption.data, sample.production.data);
+}
+
+/**
+ * Co dělá tlačítko „Vyzkoušet s ukázkovými daty“: všechny přibalené roky
+ * jedním importem, aby se rozsah, simulace i křivka kapacity počítaly jednou.
+ */
+function loadAllSampleYears(): ImportSummary {
+  const consumption = SAMPLE_DATA_YEARS.flatMap((year) => sampleYear(year).consumption.data);
+  const production = SAMPLE_DATA_YEARS.flatMap((year) => sampleYear(year).production.data);
+  return useEnergyStore.getState().addData(consumption, production);
 }
 
 function store() {
   return useEnergyStore.getState();
+}
+
+/**
+ * Energie za jedním bodem grafu.
+ *
+ * Graf je překlopený kolem nuly (spotřeba i dokoupená energie se kreslí pod
+ * ní), takže číslo v `data` samo o sobě není kWh – teprve po vynásobení
+ * `plotSign` je z něj energie, kterou uživatel v tooltipu vidí.
+ */
+function energyAt(series: ChartSeriesDef, index: number): number {
+  return Number(series.data[index][1]) * series.plotSign;
+}
+
+function energySum(series: ChartSeriesDef): number {
+  return series.data.reduce((sum, [, value]) => sum + Number(value) * series.plotSign, 0);
+}
+
+/** Série jedné veličiny, jak ji graf kreslí pro právě vybraný stav. */
+function seriesOf(built: { series: ChartSeriesDef[] }, quantity: string): ChartSeriesDef {
+  return built.series.find((s) => s.quantity === quantity)!;
 }
 
 beforeEach(() => {
@@ -137,6 +187,30 @@ describe('U1 roční bilance vůči síti', () => {
     expect(stats.totalConsumption).not.toBeCloseTo(stats.totalProduction, 0);
     expect(stats.selfSufficiencyRatio).toBeGreaterThan(0);
     expect(stats.selfSufficiencyRatio).toBeLessThanOrEqual(100);
+  });
+
+  // Přibalené roky pokrývají všechny varianty, které ČEZ produkuje: hlavičku
+  // `a+`/`a-` i `+A/… [kW]`, časy se sekundami i bez nich, `24:00:00`,
+  // desetinnou tečku i čárku, Windows-1250 i poškozenou diakritiku ve Statusu.
+  // Sada, kterou nabízí „Vyzkoušet s ukázkovými daty“, musí projít celá –
+  // jediný odmítnutý řádek skončí červeným banerem místo grafu.
+  it('U1.5 každý přibalený ukázkový rok se načte bez odmítnutého řádku a sedí na CSV', () => {
+    for (const year of SAMPLE_DATA_YEARS) {
+      const { consumption, production } = sampleYear(year);
+      expect(consumption.type).toBe('consumption');
+      expect(production.type).toBe('production');
+      expect(consumption.errors).toEqual([]);
+      expect(production.errors).toEqual([]);
+      expect(consumption.quality.rejectedRows).toBe(0);
+      expect(production.quality.rejectedRows).toBe(0);
+
+      store().clearData();
+      loadYear(sampleYear(year));
+      expect(store().availableYears).toEqual([year]);
+      const stats = store().yearlyData.get(year)!.statistics;
+      expect(stats.totalConsumption).toBeCloseTo(rawKwhSum(year, 'spotreba'), 2);
+      expect(stats.totalProduction).toBeCloseTo(rawKwhSum(year, 'vyroba'), 2);
+    }
   });
 });
 
@@ -217,6 +291,131 @@ describe('U2 špičky odběru', () => {
     expect(total).toBeGreaterThan(0);
     expect(nightProduction / total).toBeLessThan(0.05);
   });
+
+  it('U2.6 skrytí série ve filtru pod grafem nezmění statistiky ani simulaci', () => {
+    loadAllSampleYears();
+    const before = {
+      activeRecords: store().getActiveRecords().length,
+      savingsPerYear: store().batterySimulation!.savingsPerYear,
+      capacity: store().capacityRecommendation!.capacity,
+      consumption2022: store().yearlyData.get(2022)!.statistics.totalConsumption,
+    };
+
+    // Filtr je zobrazení, ne výběr dat: číslo ve statistikách se po skrytí
+    // čáry v grafu nesmí pohnout, jinak by uživatel nevěděl, co vlastně čte.
+    store().toggleSeriesVisibility('Spotřeba 2022');
+    store().toggleSeriesVisibility('Výroba 2025');
+
+    expect(store().chartConfig.hiddenSeries).toEqual(['Spotřeba 2022', 'Výroba 2025']);
+    expect(store().getActiveRecords().length).toBe(before.activeRecords);
+    expect(store().batterySimulation!.savingsPerYear).toBe(before.savingsPerYear);
+    expect(store().capacityRecommendation!.capacity).toBe(before.capacity);
+    expect(store().yearlyData.get(2022)!.statistics.totalConsumption).toBe(
+      before.consumption2022
+    );
+  });
+
+  /**
+   * Přepínač den/noc má čtyři polohy a dvě z nich data ořezávají. Uživatel se
+   * podle nich rozhoduje, kolik odebírá po západu slunce – kdyby se při
+   * ořezání kus spotřeby ztratil (nebo přičetl dvakrát), byl by to tichý
+   * posun v čísle, na kterém staví nákup baterie.
+   */
+  it('U2.7 „jen den“ a „jen noc“ se sečtou na celou spotřebu – ořezání nic neztratí', () => {
+    loadYear(sample2022);
+
+    const common: Omit<BuildChartSeriesParams, 'consumptionSplit'> = {
+      yearlyData: store().yearlyData,
+      selectedYears: [2022],
+      aggregationType: 'daily',
+      showConsumption: true,
+      showProduction: true,
+      dayNightConfig: store().chartConfig.dayNightConfig,
+      chartMode: 'balance',
+      consumptionBelowAxis: false,
+    };
+    const whole = buildChartSeries({ ...common, consumptionSplit: 'sum' })!;
+    const day = buildChartSeries({ ...common, consumptionSplit: 'day' })!;
+    const night = buildChartSeries({ ...common, consumptionSplit: 'night' })!;
+    const both = buildChartSeries({ ...common, consumptionSplit: 'both' })!;
+
+    const wholeC = seriesOf(whole, 'consumption');
+    const dayC = seriesOf(day, 'consumption');
+    const nightC = seriesOf(night, 'consumption');
+
+    // Osa se ořezáním nemění, jen hodnoty ve sloupcích.
+    expect(dayC.data).toHaveLength(wholeC.data.length);
+    expect(nightC.data).toHaveLength(wholeC.data.length);
+    expect(wholeC.data.length).toBeGreaterThanOrEqual(365);
+
+    for (let i = 0; i < wholeC.data.length; i++) {
+      expect(dayC.data[i][0]).toBe(wholeC.data[i][0]);
+      expect(energyAt(dayC, i) + energyAt(nightC, i)).toBeCloseTo(energyAt(wholeC, i), 6);
+    }
+
+    // Reálná domácnost s FVE odebírá ze sítě v obou polovinách dne, takže
+    // scénář opravdu měří rozdělení a ne dvě kopie téhož čísla.
+    expect(energySum(dayC)).toBeGreaterThan(0);
+    expect(energySum(nightC)).toBeGreaterThan(0);
+    expect(energySum(dayC) + energySum(nightC)).toBeCloseTo(
+      store().yearlyData.get(2022)!.statistics.totalConsumption,
+      3
+    );
+
+    // Výroba se nedělí: po západu slunce do sítě nic nejde.
+    expect(seriesOf(day, 'production').data).toEqual(seriesOf(whole, 'production').data);
+
+    // „Obojí“ sloupce nechá být a rozpad dá do tooltipu – jinak by se graf po
+    // zapnutí rozpadu proměnil, ačkoli uživatel chtěl jen víc detailu.
+    expect(seriesOf(both, 'consumption').data).toEqual(wholeC.data);
+    expect(both.splitByKey.size).toBe(wholeC.data.length);
+    const firstKey = `${wholeC.data[0][0]}|2022`;
+    const halves = both.splitByKey.get(firstKey)!;
+    expect(halves.day).toBeCloseTo(energyAt(dayC, 0), 6);
+    expect(halves.night).toBeCloseTo(energyAt(nightC, 0), 6);
+  });
+
+  /**
+   * „Spotřeba pod osu“ je způsob kresby, ne způsob počítání. Kdyby zrcadlení
+   * prosáklo do čísel, uživatel by četl zápornou spotřebu — a to z bilančních
+   * dat nedává smysl.
+   */
+  it('U2.8 překlopení pod osu zrcadlí kresbu, ne čísla', () => {
+    loadYear(sample2022);
+    const common: Omit<BuildChartSeriesParams, 'consumptionBelowAxis'> = {
+      yearlyData: store().yearlyData,
+      selectedYears: [2022],
+      aggregationType: 'monthly',
+      showConsumption: true,
+      showProduction: true,
+      dayNightConfig: store().chartConfig.dayNightConfig,
+      consumptionSplit: 'sum',
+      chartMode: 'balance',
+    };
+
+    const upright = buildChartSeries({ ...common, consumptionBelowAxis: false })!;
+    const mirrored = buildChartSeries({ ...common, consumptionBelowAxis: true })!;
+
+    // Výchozí poloha přepínače: obě veličiny nad nulou.
+    expect(store().chartConfig.consumptionBelowAxis).toBe(false);
+    expect(upright.series.every((s) => s.data.every(([, v]) => Number(v) >= 0))).toBe(true);
+
+    const consumptionOf = (built: typeof upright) =>
+      built.series.find((s) => s.quantity === 'consumption')!;
+    expect(consumptionOf(mirrored).data.every(([, v]) => Number(v) <= 0)).toBe(true);
+    // Výroba se nezrcadlí, zrcadlí se odebraná strana.
+    expect(mirrored.series.find((s) => s.quantity === 'production')!.plotSign).toBe(1);
+
+    // Energie za každým sloupcem je v obou polohách stejná a kladná.
+    const uprightConsumption = consumptionOf(upright);
+    const mirroredConsumption = consumptionOf(mirrored);
+    for (let i = 0; i < uprightConsumption.data.length; i++) {
+      const a = Number(uprightConsumption.data[i][1]) * uprightConsumption.plotSign;
+      const b = Number(mirroredConsumption.data[i][1]) * mirroredConsumption.plotSign;
+      expect(b).toBeCloseTo(a, 6);
+      expect(b).toBeGreaterThanOrEqual(0);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -253,6 +452,203 @@ describe('U3 porovnání let', () => {
   it('U3.3 export ve formátu „+A/… [kW]“ (2025) se načte beze ztráty řádků', () => {
     expect(sample2025.consumption.errors).toEqual([]);
     expect(sample2025.consumption.recordCount).toBe(35040);
+  });
+
+  it('U3.4 „Vyzkoušet s ukázkovými daty“ načte všechny přibalené roky rovnou k porovnání', () => {
+    const summary = loadAllSampleYears();
+    const years = [...SAMPLE_DATA_YEARS];
+
+    // Uživatel dostane celou sadu, ne jen jeden rok, a hned ji vidí v grafu.
+    expect(summary.years).toEqual(years);
+    expect(summary.newYears).toEqual(years);
+    expect(store().availableYears).toEqual(years);
+    expect(store().chartConfig.selectedYears).toEqual(years);
+
+    // Každý rok si drží vlastní statistiky – porovnání má co ukázat.
+    for (const year of years) {
+      const stats = store().yearlyData.get(year)!.statistics;
+      expect(stats.totalConsumption).toBeGreaterThan(1000);
+      expect(stats.daysWithData).toBeGreaterThanOrEqual(365);
+    }
+
+    // Simulace jede přes celý rozsah: čtyři roky = 48 měsíců, žádný 13. měsíc.
+    const sim = store().batterySimulation!;
+    expect(sim.monthlyAnalysis).toHaveLength(years.length * 12);
+    expect(sim.daysSimulated).toBeGreaterThanOrEqual(years.length * 365);
+  });
+
+  it('U3.5 při celé ukázkové sadě zůstává „roční“ hodnota za jeden rok', () => {
+    const perYear: number[] = [];
+    for (const year of SAMPLE_DATA_YEARS) {
+      store().clearData();
+      useEnergyStore.setState({ batteryConfig: { ...DEFAULT_BATTERY } });
+      loadYear(sampleYear(year));
+      perYear.push(store().batterySimulation!.savingsPerYear);
+    }
+
+    store().clearData();
+    useEnergyStore.setState({ batteryConfig: { ...DEFAULT_BATTERY } });
+    loadAllSampleYears();
+    const all = store().batterySimulation!.savingsPerYear;
+
+    // Čtyři roky v jednom importu nesmí úsporu zečtyřnásobit – je to průměr,
+    // takže leží mezi nejhorším a nejlepším rokem.
+    expect(all).toBeLessThanOrEqual(Math.max(...perYear) * 1.05);
+    expect(all).toBeGreaterThanOrEqual(Math.min(...perYear) * 0.95);
+  });
+
+  it('U3.6 import více roků otevře měsíční zobrazení', () => {
+    // Denní sloupce za čtyři roky přes sebe jsou nečitelná hradba; měsíční je
+    // nejhrubší zobrazení, ve kterém porovnání roků něco říká.
+    expect(store().chartConfig.aggregationType).toBe('daily');
+
+    loadAllSampleYears();
+    expect(store().chartConfig.selectedYears.length).toBeGreaterThan(1);
+    expect(store().chartConfig.aggregationType).toBe('monthly');
+
+    // Jeden rok si denní zobrazení nechá.
+    store().clearData();
+    loadYear(sample2022);
+    expect(store().chartConfig.aggregationType).toBe('daily');
+  });
+
+  it('U3.7 měsíc v grafu se porovná se stejným měsícem všech nahraných roků', () => {
+    loadAllSampleYears();
+    // V grafu je jediný rok – porovnání musí přesto znát všechny nahrané.
+    store().setSelectedYears([2025]);
+
+    const index = buildUnitComparison({
+      yearlyData: store().yearlyData,
+      availableYears: store().availableYears,
+      selectedYears: store().chartConfig.selectedYears,
+      aggregationType: 'monthly',
+      // Porovnání se ořezává stejně jako graf; tady se na celek nedělí.
+      consumptionSplit: 'sum',
+      dayNightConfig: store().chartConfig.dayNightConfig,
+    })!;
+
+    const july = index.units.find((u) => u.label === 'Červenec')!;
+    expect(july.consumption.rows.map((r) => r.year)).toEqual([2022, 2023, 2024, 2025]);
+
+    // Nezávislý orákl: součet červencových záznamů daného roku.
+    for (const row of july.consumption.rows) {
+      const fromRecords = store()
+        .yearlyData.get(row.year)!
+        .records.filter((r) => r.timestamp.getMonth() === 6)
+        .reduce((sum, r) => sum + r.consumption, 0);
+      expect(row.value).toBeCloseTo(fromRecords, 6);
+    }
+
+    // Průměr je aritmetický průměr těch let a odchylka se počítá vůči němu.
+    const values = july.consumption.rows.map((r) => r.value);
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+    expect(july.consumption.average).toBeCloseTo(mean, 6);
+    for (const row of july.consumption.rows) {
+      expect(row.vsAverage).toBeCloseTo(((row.value - mean) / mean) * 100, 6);
+      // Znaménko odpovídá straně průměru, na kterou hodnota padá.
+      if (row.value > mean) expect(row.vsAverage!).toBeGreaterThan(0);
+      if (row.value < mean) expect(row.vsAverage!).toBeLessThan(0);
+    }
+
+    // Rok, který graf právě kreslí, má barvu série; ostatní jsou bez barvy,
+    // aby bylo poznat, co je na obrazovce a co jen pro porovnání.
+    const byYear = new Map(july.consumption.rows.map((r) => [r.year, r]));
+    expect(byYear.get(2025)!.color).not.toBeNull();
+    expect(byYear.get(2022)!.color).toBeNull();
+  });
+
+  it('U3.8 týdenní pás je jeden týden všech roků, ne pondělí jednoho z nich', () => {
+    // Regrese: osa se klíčovala datem pondělí, které se rok od roku posouvá,
+    // takže se roky prokládaly do samostatných pásů pár dnů od sebe a při
+    // zoomu se pás zdánlivě pohyboval.
+    loadAllSampleYears();
+    const years = store().chartConfig.selectedYears;
+    expect(years).toHaveLength(4);
+
+    const built = buildChartSeries({
+      yearlyData: store().yearlyData,
+      selectedYears: years,
+      aggregationType: 'weekly',
+      showConsumption: true,
+      showProduction: false,
+      dayNightConfig: store().chartConfig.dayNightConfig,
+      consumptionSplit: 'sum',
+      chartMode: 'balance',
+      consumptionBelowAxis: false,
+    })!;
+
+    // Ne 4 × 53 kategorií, ale jeden pás na týden plus přesahy na krajích.
+    expect(built.dates.length).toBeLessThanOrEqual(55);
+
+    const yearsPerCategory = new Map<string, number>();
+    for (const series of built.series) {
+      for (const [key] of series.data) {
+        yearsPerCategory.set(String(key), (yearsPerCategory.get(String(key)) ?? 0) + 1);
+      }
+    }
+    // Každý běžný pás (bez přesahů na krajích) nese všechny čtyři roky.
+    for (const key of built.dates.slice(1, -1)) {
+      expect(yearsPerCategory.get(key), `pás ${key}`).toBe(years.length);
+    }
+
+    // A tooltip u toho pásu řekne za každý rok, které dny sečetl – pondělí
+    // 27. týdne padne v každém roce na jiné datum.
+    const index = buildUnitComparison({
+      yearlyData: store().yearlyData,
+      availableYears: store().availableYears,
+      selectedYears: years,
+      aggregationType: 'weekly',
+      consumptionSplit: 'sum',
+      dayNightConfig: store().chartConfig.dayNightConfig,
+    })!;
+    const week27 = index.units.find((u) => u.label === '27. týden')!;
+    for (const row of week27.consumption.rows) {
+      expect(row.rangeLabel).toMatch(/^\d+\. \d+\. – \d+\. \d+\.$/);
+    }
+    // Rozsahy se mezi roky liší, proto jsou v řádcích a ne v hlavičce.
+    expect(new Set(week27.consumption.rows.map((r) => r.rangeLabel)).size).toBe(4);
+  });
+
+  /**
+   * Režim „net“ odpovídá na otázku, kterou si uživatel před nákupem baterie
+   * klade jako první: kolik jsem musel dokoupit. Musí to tedy být přesně
+   * rozdíl obou stran elektroměru za daný rok – ne odhad a ne součet.
+   */
+  it('U3.9 v režimu „dokoupená energie“ je součet série rozdílem ročního odběru a dodávky', () => {
+    loadAllSampleYears();
+    const years = store().chartConfig.selectedYears;
+    expect(years.length).toBeGreaterThan(1);
+
+    const built = buildChartSeries({
+      yearlyData: store().yearlyData,
+      selectedYears: years,
+      aggregationType: 'monthly',
+      showConsumption: true,
+      showProduction: true,
+      dayNightConfig: store().chartConfig.dayNightConfig,
+      consumptionSplit: 'sum',
+      chartMode: 'net',
+      // Zrcadlení pod osu je volba uživatele; scénář ověřuje čísla, ne kresbu.
+      consumptionBelowAxis: false,
+    })!;
+
+    // Jedna série na rok – ne dvě, které by si uživatel musel odečítat sám.
+    expect(built.series).toHaveLength(years.length);
+    expect(built.series.map((s) => s.year)).toEqual(years);
+
+    for (const series of built.series) {
+      expect(series.quantity).toBe('net');
+      const stats = store().yearlyData.get(series.year)!.statistics;
+      const expected = stats.totalConsumption - stats.totalProduction;
+
+      expect(energySum(series)).toBeCloseTo(expected, 6);
+
+      // Ukázkové roky odeberou ze sítě víc, než do ní dodají, takže „dokoupeno“
+      // je kladné – a kreslí se na stejnou stranu nuly jako spotřeba v bilanci.
+      expect(expected).toBeGreaterThan(0);
+      expect(series.plotSign).toBe(1);
+      expect(series.data.reduce((sum, [, value]) => sum + Number(value), 0)).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -69,9 +69,9 @@ export interface YearStatistics {
 /**
  * How records are bucketed on the chart's x-axis.
  *
- * Day/night is deliberately absent: it is a toggle (`ChartConfig.showDayNight`)
- * that applies to whichever bucketing is active, so the user does not have to
- * give up their view to see the split.
+ * Day/night is deliberately absent: it is a separate switch
+ * (`ChartConfig.consumptionSplit`) that applies to whichever bucketing is
+ * active, so the user does not have to give up their view to see the split.
  */
 export type AggregationType = 'raw' | 'hourly' | 'daily' | 'weekly' | 'monthly';
 
@@ -83,6 +83,27 @@ export type AggregationType = 'raw' | 'hourly' | 'daily' | 'weekly' | 'monthly';
  * `selection` – the range brushed in the chart
  */
 export type RangeMode = 'years' | 'last' | 'selection';
+
+/**
+ * What the chart does with the day/night division of consumption.
+ *
+ * `sum` – one number per bucket, the whole day (the default)
+ * `both` – same bars, but the tooltip breaks the bucket into day and night
+ * `day` / `night` – only that half is counted, in the chart and the tooltip
+ *
+ * Production is never divided: panels export nothing after sunset.
+ */
+export type ConsumptionSplit = 'sum' | 'both' | 'day' | 'night';
+
+/**
+ * Which quantities the chart draws.
+ *
+ * `balance` – grid import and grid export against each other, the import
+ *   mirrored below the zero line when `consumptionBelowAxis` says so
+ * `net` – one series, what is left after the export is subtracted from the
+ *   import ("Dokoupená energie"); below zero means a surplus was exported
+ */
+export type ChartMode = 'balance' | 'net';
 
 export interface DayNightData extends DayNightSplit {
   date: Date;
@@ -260,9 +281,19 @@ export interface ChartConfig {
   showProduction: boolean;
   dayNightConfig: DayNightConfig;
   rangeMode: RangeMode;
+  /** What the chart and the tooltip do with the day/night half of consumption. */
+  consumptionSplit: ConsumptionSplit;
+  /** Grid import against export, or the net of the two. */
+  chartMode: ChartMode;
   /**
-   * Split the chart by day and night. Bar views stack a day and a night
-   * segment per series; the time-axis views mark the night hours with bands.
+   * Mirror what was bought below the zero line, so the two sides of the meter
+   * can be read against each other instead of bar by bar.
    */
-  showDayNight: boolean;
+  consumptionBelowAxis: boolean;
+  /**
+   * Names of individual series switched off in the filter under the chart
+   * (e.g. "Spotřeba 2023"). The `showConsumption` / `showProduction` switches
+   * turn a whole row off; this hides single years or the day/night halves.
+   */
+  hiddenSeries: string[];
 }

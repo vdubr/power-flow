@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { useEnergyStore } from '../store/energyStore';
-import { EnergyRecord, RawDataPoint, YearlyData } from '../types/energy';
+import {
+  ConsumptionSplit,
+  EnergyRecord,
+  RawDataPoint,
+  YearlyData,
+} from '../types/energy';
 import { calculateYearStatistics, computeHasFlags } from '../utils/energyData';
 
 const makeRecord = (
@@ -177,23 +182,197 @@ describe('energyStore extensions', () => {
     });
   });
 
-  describe('setShowDayNight', () => {
-    it('updates chartConfig.showDayNight', () => {
-      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(false);
+  /**
+   * Den a noc už není přepínač „rozdělit / nerozdělit“ (`showDayNight`), ale
+   * čtyři stavy toho, co se do sloupce spotřeby počítá — proto ta akce
+   * nastavuje `consumptionSplit`.
+   */
+  describe('setConsumptionSplit', () => {
+    it('přepíná, co se ze spotřeby počítá, a začíná na celku', () => {
+      expect(useEnergyStore.getState().chartConfig.consumptionSplit).toBe('sum');
 
-      useEnergyStore.getState().setShowDayNight(true);
-      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(true);
-
-      useEnergyStore.getState().setShowDayNight(false);
-      expect(useEnergyStore.getState().chartConfig.showDayNight).toBe(false);
+      for (const split of ['both', 'day', 'night', 'sum'] as ConsumptionSplit[]) {
+        useEnergyStore.getState().setConsumptionSplit(split);
+        expect(useEnergyStore.getState().chartConfig.consumptionSplit).toBe(split);
+      }
     });
+  });
 
+  describe('dayNightConfig', () => {
     it('defaults to sunrise-to-sunset for the default location', () => {
       // "Day" means what it means outside the window, so the default is the
       // sun, not clock hours.
       const { dayNightConfig } = useEnergyStore.getState().chartConfig;
       expect(dayNightConfig.mode).toBe('sun');
       expect(dayNightConfig.location?.name).toBe('Praha');
+    });
+  });
+
+  describe('setChartMode', () => {
+    it('přepíná mezi bilancí a dokoupenou energií, a začíná na bilanci', () => {
+      expect(useEnergyStore.getState().chartConfig.chartMode).toBe('balance');
+
+      useEnergyStore.getState().setChartMode('net');
+      expect(useEnergyStore.getState().chartConfig.chartMode).toBe('net');
+
+      useEnergyStore.getState().setChartMode('balance');
+      expect(useEnergyStore.getState().chartConfig.chartMode).toBe('balance');
+    });
+  });
+
+  describe('setConsumptionBelowAxis', () => {
+    it('zrcadlení pod osu je vypnuté, dokud si ho uživatel nezapne', () => {
+      expect(useEnergyStore.getState().chartConfig.consumptionBelowAxis).toBe(false);
+
+      useEnergyStore.getState().setConsumptionBelowAxis(true);
+      expect(useEnergyStore.getState().chartConfig.consumptionBelowAxis).toBe(true);
+
+      useEnergyStore.getState().setConsumptionBelowAxis(false);
+      expect(useEnergyStore.getState().chartConfig.consumptionBelowAxis).toBe(false);
+    });
+  });
+
+  describe('setHighlightedSeries', () => {
+    /** Rozsvítí simulaci, aby bylo na čem poznat, že se nepřepočítala. */
+    function seedWithSimulation() {
+      seedStore(
+        new Map([
+          [
+            2024,
+            [
+              makeRecord('2024-06-15T12:00', 1, 3),
+              makeRecord('2024-06-15T21:00', 2, 0),
+              makeRecord('2024-06-16T12:00', 1, 3),
+              makeRecord('2024-06-16T21:00', 2, 0),
+            ],
+          ],
+        ])
+      );
+      // seedStore nechává simulaci nulovou; tohle ji spočítá.
+      useEnergyStore.getState().setSelectedYears([2024]);
+      expect(useEnergyStore.getState().batterySimulation).not.toBeNull();
+    }
+
+    it('drží zvýrazněné série v korenu storu, ne v chartConfig', () => {
+      expect(useEnergyStore.getState().highlightedSeries).toEqual([]);
+
+      useEnergyStore.getState().setHighlightedSeries(['Spotřeba 2024']);
+      expect(useEnergyStore.getState().highlightedSeries).toEqual(['Spotřeba 2024']);
+
+      useEnergyStore.getState().setHighlightedSeries([]);
+      expect(useEnergyStore.getState().highlightedSeries).toEqual([]);
+    });
+
+    /**
+     * Proto je zvýraznění mimo `chartConfig`: myš přejíždějící po čipech filtru
+     * mění tento stav na každém pixelu a simulace baterie ani křivka kapacity
+     * se za ní nesmí táhnout.
+     */
+    it('nepřepočítává simulaci ani doporučení kapacity', () => {
+      seedWithSimulation();
+      const simulation = useEnergyStore.getState().batterySimulation;
+      const recommendation = useEnergyStore.getState().capacityRecommendation;
+      const chartConfig = useEnergyStore.getState().chartConfig;
+
+      useEnergyStore.getState().setHighlightedSeries(['Spotřeba 2024']);
+      useEnergyStore.getState().setHighlightedSeries(['Výroba 2024']);
+
+      // Táž instance, ne jen stejná čísla – jinak by se přepočet skryl.
+      expect(useEnergyStore.getState().batterySimulation).toBe(simulation);
+      expect(useEnergyStore.getState().capacityRecommendation).toBe(recommendation);
+      expect(useEnergyStore.getState().chartConfig).toBe(chartConfig);
+    });
+  });
+
+  /**
+   * Zoom není rozhodnutí, že ho mají následovat statistiky – to je přepínač
+   * rozsahu. `setZoomRange` proto rozsah jen odloží připravený k použití,
+   * na rozdíl od `setTimeRange`, který přepne na „Výseč v grafu“.
+   */
+  describe('setZoomRange', () => {
+    const range = { start: new Date(2024, 2, 1), end: new Date(2024, 2, 31, 23, 59) };
+
+    function seedThreeYears() {
+      seedStore(
+        new Map([
+          [
+            2024,
+            [
+              makeRecord('2024-03-01T12:00', 1, 0.5),
+              makeRecord('2024-03-02T12:00', 1, 0.5),
+              makeRecord('2024-09-01T12:00', 3, 2),
+              makeRecord('2024-09-02T12:00', 3, 2),
+            ],
+          ],
+        ])
+      );
+    }
+
+    it('nepřepíná rangeMode, jen odloží rozsah k použití', () => {
+      seedThreeYears();
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('years');
+      const activeBefore = useEnergyStore.getState().getActiveRecords().length;
+
+      useEnergyStore.getState().setZoomRange(range);
+
+      const state = useEnergyStore.getState();
+      expect(state.chartConfig.timeRange).toEqual(range);
+      // Rozsah je připravený, ale panely ho zatím nečtou.
+      expect(state.chartConfig.rangeMode).toBe('years');
+      expect(state.getActiveRecords().length).toBe(activeBefore);
+
+      // A přepnutí na „Výseč v grafu“ pak použije přesně to, co je na obrazovce.
+      useEnergyStore.getState().setRangeMode('selection');
+      expect(useEnergyStore.getState().getActiveRecords()).toHaveLength(2);
+    });
+
+    it('v režimu „selection“ přepočítá aktivní rozsah hned', () => {
+      seedThreeYears();
+      useEnergyStore.getState().setRangeMode('selection');
+      // Bez rozsahu je výseč celá data.
+      expect(useEnergyStore.getState().getActiveRecords()).toHaveLength(4);
+
+      useEnergyStore.getState().setZoomRange(range);
+
+      const active = useEnergyStore.getState().getActiveRecords();
+      expect(active).toHaveLength(2);
+      expect(active.every((r) => r.timestamp.getMonth() === 2)).toBe(true);
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('selection');
+    });
+
+    it('mimo režim „selection“ simulaci nepřepočítává', () => {
+      seedThreeYears();
+      useEnergyStore.getState().setSelectedYears([2024]);
+      const simulation = useEnergyStore.getState().batterySimulation;
+      expect(simulation).not.toBeNull();
+
+      useEnergyStore.getState().setZoomRange(range);
+      // Panely rozsah nečtou, takže není co přepočítat.
+      expect(useEnergyStore.getState().batterySimulation).toBe(simulation);
+    });
+
+    it('stejný rozsah podruhé je no-op, aby zoom netočil store dokola', () => {
+      seedThreeYears();
+      useEnergyStore.getState().setZoomRange(range);
+      const chartConfig = useEnergyStore.getState().chartConfig;
+
+      // ECharts hlásí okno i při dojezdu animace; každé hlášení se stejnou
+      // hodnotou by jinak překreslilo celou stránku.
+      useEnergyStore.getState().setZoomRange({
+        start: new Date(range.start),
+        end: new Date(range.end),
+      });
+      expect(useEnergyStore.getState().chartConfig).toBe(chartConfig);
+    });
+
+    it('zrušení zoomu smaže rozsah, ale režim nechá být', () => {
+      seedThreeYears();
+      useEnergyStore.getState().setRangeMode('last');
+      useEnergyStore.getState().setZoomRange(range);
+
+      useEnergyStore.getState().setZoomRange(null);
+      expect(useEnergyStore.getState().chartConfig.timeRange).toBeNull();
+      expect(useEnergyStore.getState().chartConfig.rangeMode).toBe('last');
     });
   });
 
@@ -464,6 +643,74 @@ describe('energyStore extensions', () => {
       expect(state.availableYears).toEqual([2023, 2024]);
       // Two real years in one batch is a comparison: show both.
       expect(state.chartConfig.selectedYears).toEqual([2023, 2024]);
+    });
+
+    it('switches to the monthly view when an import brings more than one year', () => {
+      // A daily bar per year is unreadable in the comparison view, so an
+      // import that lands there picks the granularity that can be read.
+      expect(useEnergyStore.getState().chartConfig.aggregationType).toBe('daily');
+
+      const y2023 = buildRange('2023-01-01T00:00', '2023-12-31T23:00');
+      const y2024 = buildRange('2024-01-01T00:00', '2024-12-31T23:00');
+      useEnergyStore.getState().addData(
+        [...y2023.consumption, ...y2024.consumption],
+        [...y2023.production, ...y2024.production]
+      );
+
+      expect(useEnergyStore.getState().chartConfig.aggregationType).toBe('monthly');
+    });
+
+    it('leaves the aggregation alone when an import brings a single year', () => {
+      const y2024 = buildRange('2024-01-01T00:00', '2024-12-31T23:00');
+      useEnergyStore.getState().addData(y2024.consumption, y2024.production);
+
+      expect(useEnergyStore.getState().chartConfig.aggregationType).toBe('daily');
+    });
+
+    it('does not undo the user’s own aggregation on a re-import of the same years', () => {
+      const y2023 = buildRange('2023-01-01T00:00', '2023-12-31T23:00');
+      const y2024 = buildRange('2024-01-01T00:00', '2024-12-31T23:00');
+      const consumption = [...y2023.consumption, ...y2024.consumption];
+      const production = [...y2023.production, ...y2024.production];
+
+      useEnergyStore.getState().addData(consumption, production);
+      useEnergyStore.getState().setAggregationType('weekly');
+
+      // Same files again: the selection does not move, so neither does the view.
+      useEnergyStore.getState().addData(consumption, production);
+      expect(useEnergyStore.getState().chartConfig.aggregationType).toBe('weekly');
+    });
+
+    it('drops series hidden in the filter when the imported years take over', () => {
+      const y2022 = buildRange('2022-01-01T00:00', '2022-12-31T23:00');
+      useEnergyStore.getState().addData(y2022.consumption, y2022.production);
+      useEnergyStore.getState().toggleSeriesVisibility('Spotřeba');
+      expect(useEnergyStore.getState().chartConfig.hiddenSeries).toEqual(['Spotřeba']);
+
+      // Series are renamed per year once a second year appears; a leftover name
+      // would silently hide part of the freshly imported data.
+      const y2024 = buildRange('2024-01-01T00:00', '2024-12-31T23:00');
+      useEnergyStore.getState().addData(y2024.consumption, y2024.production);
+      expect(useEnergyStore.getState().chartConfig.hiddenSeries).toEqual([]);
+    });
+  });
+
+  describe('toggleSeriesVisibility', () => {
+    it('hides and shows a single series without touching the data', () => {
+      const records = new Map<number, EnergyRecord[]>([
+        [2024, [makeRecord('2024-06-01T12:00', 5, 2), makeRecord('2024-06-02T12:00', 4, 3)]],
+      ]);
+      seedStore(records);
+      const activeBefore = useEnergyStore.getState().getActiveRecords().length;
+
+      useEnergyStore.getState().toggleSeriesVisibility('Výroba');
+      expect(useEnergyStore.getState().chartConfig.hiddenSeries).toEqual(['Výroba']);
+      // Hiding a line is a view setting, not a filter on the data.
+      expect(useEnergyStore.getState().getActiveRecords().length).toBe(activeBefore);
+      expect(useEnergyStore.getState().chartConfig.showProduction).toBe(true);
+
+      useEnergyStore.getState().toggleSeriesVisibility('Výroba');
+      expect(useEnergyStore.getState().chartConfig.hiddenSeries).toEqual([]);
     });
   });
 });

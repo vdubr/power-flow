@@ -9,9 +9,15 @@ Webová aplikace pro majitele fotovoltaiky, kteří se rozhodují, **zda a jakou
    - více souborů a více let najednou
    - hlásí, kolik řádků se nepodařilo přečíst a kolik intervalů ČEZ označil jako neplatné měření
    - po importu potvrdí, co se načetlo, a přepne graf i statistiky na nahraný rok
-2. **Zobrazení bilance** – graf s agregací 15min / hodinovou / denní / týdenní / měsíční, TOP dny, porovnání let, výběr období tažením v grafu
-   - denní, týdenní a měsíční zobrazení jsou sloupcová
-   - přepínač **Den / noc** platí pro kterékoli zobrazení: u sloupců rozdělí spotřebu na denní a noční část, u 15min a hodinového vyznačí noc pásy
+2. **Zobrazení bilance** – graf s agregací 15min / hodinovou / denní / týdenní / měsíční, filtr sérií pod grafem, TOP dny, porovnání let, přiblížení grafu, které zároveň slouží jako výseč pro celou stránku
+   - přepínačem **„Spotřeba pod osu"** (výchozí vypnuto) se dá graf překlopit: odebraná energie se pak zrcadlí pod nulu a dvě strany elektroměru se dají srovnat pohledem, místo aby se porovnávaly dva sloupce vedle sebe. Osa ani žádné číslo v UI přitom neukazuje negativní kWh — pod nulou je zrcadlená geometrie, ne negativní energie
+   - dvě zobrazení, přepínač u volby agregace: **„Odběr a dodávka"** kreslí obě veličiny proti sobě, **„Dokoupená energie"** jednu sérii na rok — spotřeba minus výroba, tedy kolik po odečtení přetoků zbylo dokoupit
+   - **průměr** právě vykreslených sérií je v grafu proložený přerušovanou čarou, jedna na veličinu
+   - denní, týdenní a měsíční zobrazení jsou sloupcová; import s více roky se otevře rovnou v měsíčním, kde je porovnání čitelné
+   - **filtr dat** pod grafem má řádek na spotřebu a řádek na výrobu, každý s přepínačem celé veličiny a s čipem na každý nahraný rok (v „Dokoupené energii" je řádek jediný a bez přepínače veličiny); skrytí série mění jen graf, ne statistiky. Ukázání na čip (nebo tabulátor na něj) zvýrazní odpovídající sérii v grafu — se čtyřmi roky je čip jediné místo, kde se dá série odlišit od sousedních
+   - v týdenním a měsíčním zobrazení ukázání na svislý pás jednotky vypíše ten týden či měsíc za **všechny nahrané roky**, jejich průměr a odchylku od něj (i pro roky, které graf právě nekreslí)
+   - čtyřstavový přepínač **Suma / Den i noc / Jen den / Jen noc** na konci řádku spotřeby platí pro kterékoli zobrazení: „Suma" a „Den i noc" kreslí stejné sloupce a druhý z nich jen přidá rozpad do popisku u kurzoru, „Jen den" a „Jen noc" data v grafu i v popisku ořežou. U 15min a hodinového zobrazení není co v jednom bodě dělit, takže jakýkoli stav kromě „Sumy" vyznačí noční hodiny pásy (jen u jednoho vybraného roku — dva roky pásů přes sebe se nedají přečíst)
+   - tlačítko v hlavičce karty grafu zvětší graf **na celou obrazovku**
 3. **Doporučení kapacity baterie** – hlavní výstup: simulace celého rozsahu 2–30 kWh a doporučení v koleni křivky úspor, včetně grafu, který volbu dokládá
 4. **Simulace „co kdyby"** – kapacita, hloubka vybití, účinnost, rezerva, cena elektřiny a výkupní cena
 
@@ -32,10 +38,12 @@ V jednom 15minutovém intervalu je typicky nenulová jen jedna z hodnot. Z těch
 
 ČEZ zapisuje čas **konce** měřicího intervalu:
 
-| Formát | První řádek dne | Poslední řádek roku |
+| Varianta exportu | První řádek dne | Poslední řádek roku |
 | --- | --- | --- |
-| `a+` / `a-` | `01.01.2022 00:15` | `01.01.2023 00:00` |
-| `+A/… [kW]` | `01.01.2025 00:15:00` | `31.12.2025 24:00:00` |
+| bez sekund (ukázková data 2022, 2023) | `01.01.2022 00:15` | `01.01.2023 00:00` |
+| se sekundami (ukázková data 2024, 2025) | `01.01.2025 00:15:00` | `31.12.2025 24:00:00` |
+
+Varianta času nesouvisí s hlavičkou: označení `a+`/`a-` i `+A/… [kW]` se objevuje v obou (2023 má novou hlavičku, ale staré časy bez sekund). Proto se typ dat pozná z hlavičky a čas se parsuje nezávisle.
 
 Aplikace si timestamp **interně posouvá na začátek intervalu** (`intervalStart()` v `src/utils/csvParser.ts`). Bez toho by každý den dostal 15 minut z předchozího dne a poslední řádek roku by vytvořil fantomový rok s jediným záznamem. Hodina `24:00` se normalizuje na půlnoc následujícího dne; v novějším formátu je to jeden řádek denně, tedy 365 řádků ročně, které se dřív zahazovaly.
 
@@ -54,15 +62,17 @@ Při přechodu na zimní čas exportuje ČEZ 02:00–02:45 dvakrát. JavaScript 
 | Celková spotřeba | součet odběru ze sítě | aktivní rozsah |
 | Celková výroba | součet dodávky do sítě | aktivní rozsah |
 | Poměr dodávky k odběru | `min(100, dodávka / odběr × 100)` | aktivní rozsah |
-| Spotřeba ve dne / v noci | rozdělení podle východu a západu slunce pro zvolenou lokalitu | aktivní rozsah |
+| Spotřeba ve dne / v noci | rozdělení podle východu a západu slunce pro lokalitu z importního pruhu | aktivní rozsah |
 | Úspora za rok | `(ušetřený nákup − ušlý výkup) × 365 / počet dnů` | přepočteno na rok |
 | Doporučená kapacita | koleno křivky úspora–kapacita | aktivní rozsah |
 | Dny bez dokupu | dny s nulovým odběrem, oddělené od dnů, které by takové byly i bez baterie | aktivní rozsah |
 | Pokrytí odběru baterií | `snížení odběru / původní odběr`, vážené energií | aktivní rozsah |
 
-**Den a noc.** „Den" je od východu do západu slunce pro nastavenou lokalitu (výchozí Praha), noc je zbytek. Rozhodnutí dělá jediná funkce `createIsDayPredicate` v `src/utils/dayNight.ts`, takže sloupce v grafu, noční pásy i statistiky nemohou říkat něco jiného. Alternativou je ruční okno hodin. Výroba se nerozděluje, protože fotovoltaika po západu slunce do sítě nedodává.
+**Den a noc.** „Den" je od východu do západu slunce pro lokalitu vybranou chipem v importním pruhu (výchozí Praha), noc je zbytek. Rozhodnutí dělá jediná funkce `createIsDayPredicate` v `src/utils/dayNight.ts`, takže rozpad v grafu, noční pásy i statistiky nemohou říkat něco jiného. Ruční okno hodin (`dayNightConfig.mode: 'manual'`) v kódu i v typech zůstává a používají ho testy, ale se zrušením karty „Nastavení grafu" k němu přestalo vést jakékoli UI — pro uživatele je „den" vždy podle slunce. Výroba se nerozděluje, protože fotovoltaika po západu slunce do sítě nedodává.
 
-**Aktivní rozsah** je jediná podmnožina dat, se kterou pracuje graf, statistiky i simulace baterie současně. Přepíná se v ovládacím prvku v hlavičce sekcí: vybrané roky, poslední rok, nebo výseč vybraná tažením v grafu.
+Statistické dlaždice „Spotřeba ve dne / v noci" ukazují obě poloviny vždy, nezávisle na přepínači pod grafem: ten je nastavení grafu, ne filtr dat.
+
+**Aktivní rozsah** je jediná podmnožina dat, se kterou pracuje graf, statistiky i simulace baterie současně. Přepíná se v ovládacím prvku v hlavičce sekcí: vybrané roky, poslední rok, nebo **výseč v grafu** — tedy rozsah, na který je graf právě přiblížený. Zoom a výseč jsou jedna věc, takže v grafu není žádný nástroj na tažení výseče a volba je dostupná vždy (bez přiblížení znamená celý rozsah). Když je graf přiblížený, vypisuje se rozsah vpravo nad ním. Při porovnání více let sdílí roky jednu osu měsíc-den, kde jeden konkrétní časový rozsah neexistuje; popisek tam proto vypisuje názvy krajních kategorií a jako výseč se takový zoom použít nedá — režim „Výseč v grafu" pak pracuje s celým rozsahem.
 
 **Roční úspora** odečítá ušlý příjem z přetoků: energie uložená do baterie se už neprodá za výkupní cenu. Simulace také počítá s účinností baterie (výchozí 90 %), takže z ní vyjde méně, než do ní vešlo.
 
@@ -96,13 +106,15 @@ Po každé změně: `npm run lint && npm run build && npm run test:run`. Totéž
 ```
 src/
 ├── components/
-│   ├── Chart/           # hlavní graf a jeho ovládání
+│   ├── Chart/           # graf, volba agregace, přepínač zobrazení, filtr sérií, celá obrazovka
 │   ├── Common/          # sdílené dlaždice, hlavičky sekcí, přepínač rozsahu
 │   ├── Configuration/   # formuláře nastavení (baterie)
-│   ├── DataImport/      # drop zóna, odznaky roků, návod, ukázková data
+│   ├── DataImport/      # drop zóna, odznaky roků, chip lokality, návod, ukázková data
 │   ├── Layout/          # hlavička a shell aplikace
 │   └── Statistics/      # statistiky, doporučení kapacity, analýza baterie
 ├── hooks/
+│   ├── useFullscreen.ts       # karta grafu na celou obrazovku
+│   ├── useGlobalDropGuard.ts  # drop mimo zónu neotevře CSV v prohlížeči
 │   └── useSmoothWheelZoom.ts
 ├── store/
 │   └── energyStore.ts   # data, aktivní rozsah, simulace, doporučení
@@ -112,7 +124,7 @@ src/
 ├── utils/
 │   ├── batteryAlgorithm.ts    # simulace, křivka kapacity, doporučení
 │   ├── batteryChartOptions.ts # ECharts options pro obrazovku baterie
-│   ├── chartSeriesBuilder.ts  # sestavení sérií hlavního grafu
+│   ├── chartSeriesBuilder.ts  # série hlavního grafu, čipy filtru, průměr, výseč ze zoomu
 │   ├── csvParser.ts           # parsování exportu ČEZ
 │   ├── dataAggregation.ts     # agregace, TOP dny, filtr rozsahu
 │   ├── dateUtils.ts           # klíče podle lokálního času, NE UTC
@@ -152,7 +164,17 @@ npx vitest run src/__tests__/userScenarios.test.ts --reporter=verbose
 
 ## Ukázková data
 
-`public/sample-data/2022` a `2025` jsou skutečné exporty (35 040 řádků na soubor) v obou formátech, které ČEZ produkuje. Jsou verzované s `-text` v `.gitattributes`, aby zůstaly bajtově věrné, včetně CRLF a kódování Windows-1250.
+`public/sample-data/2022`–`2025` jsou skutečné exporty jednoho odběrného místa (35 040 řádků na soubor, 35 136 v přestupném 2024) v obou formátech, které ČEZ produkuje:
+
+| Rok | Hlavička | Časy | Desetinný oddělovač | Kódování |
+| --- | --- | --- | --- | --- |
+| 2022 | `a+` / `a-` | `DD.MM.YYYY HH:mm` | tečka | UTF-8 s poškozenou diakritikou ve sloupci Status (nález D9) |
+| 2023 | `+A/… [kW]` | `DD.MM.YYYY HH:mm` | tečka | Windows-1250 |
+| 2024, 2025 | `+A/… [kW]` | `DD.MM.YYYY HH:mm:ss` včetně `24:00:00` | čárka | Windows-1250 |
+
+Soubory jsou verzované s `-text` v `.gitattributes`, aby zůstaly bajtově věrné, včetně CRLF a kódování.
+
+Tlačítko **„Vyzkoušet s ukázkovými daty“** načte všechny čtyři roky jedním importem (`SAMPLE_DATA_YEARS` v `src/constants.ts`), takže uživatel bez vlastního exportu vidí i porovnání let. Roky se přidávají do storu jednou dávkou, aby se simulace baterie a křivka kapacity počítaly jen jednou.
 
 ## Deployment
 
