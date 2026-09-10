@@ -8,7 +8,7 @@
  * assertují SPRÁVNÉ chování, které dnes neplatí. Až bude chyba opravená,
  * Vitest začne hlásit „expected test to fail“ – pak stačí `.fails` odebrat.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { useEnergyStore } from '../store/energyStore';
@@ -35,6 +35,14 @@ import { SAMPLE_DATA_YEARS } from '../constants';
 // ---------------------------------------------------------------------------
 
 // Vitest běží z kořene projektu; v jsdom prostředí není import.meta.url file:// URL.
+/**
+ * Tyhle scénáře běží nad 140 000 skutečnými záznamy a některé pro jedno
+ * tvrzení spustí i několik simulací baterie (57 běhů křivky kapacity za kus).
+ * Pod instrumentací pokrytí to na CI runneru přeteče výchozích 5 s, aniž by
+ * se cokoli zaseklo — proto vlastní limit místo zkracování scénářů.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 const SAMPLE_DIR = resolve(process.cwd(), 'public/sample-data');
 
 type Kind = 'spotreba' | 'vyroba';
